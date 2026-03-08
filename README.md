@@ -39,7 +39,7 @@ cd /home/uaysk/llama-swap/qwen3-asr-openai
 ./run.sh
 ```
 
-The server listens on `0.0.0.0:3003` by default.
+The server listens on `0.0.0.0:8000` by default.
 
 Examples:
 

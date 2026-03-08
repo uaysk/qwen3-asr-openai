@@ -6,14 +6,14 @@
   <title>Qwen ASR Realtime Demo</title>
   <style>
     :root {
-      --bg: #f4efe7;
-      --panel: rgba(255, 252, 245, 0.88);
-      --ink: #1e1b18;
-      --muted: #6d6358;
-      --accent: #0d6b5c;
-      --accent-2: #cb5f2f;
-      --line: rgba(30, 27, 24, 0.12);
-      --shadow: 0 24px 60px rgba(36, 27, 18, 0.12);
+      --bg: #0b0f14;
+      --panel: rgba(18, 24, 32, 0.92);
+      --ink: #e8edf3;
+      --muted: #96a3b5;
+      --accent: #39c6a7;
+      --accent-2: #ff7a59;
+      --line: rgba(232, 237, 243, 0.10);
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
     }
 
     * { box-sizing: border-box; }
@@ -24,9 +24,9 @@
       font-family: "IBM Plex Sans", "Noto Sans KR", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at top left, rgba(203, 95, 47, 0.18), transparent 28%),
-        radial-gradient(circle at top right, rgba(13, 107, 92, 0.18), transparent 30%),
-        linear-gradient(180deg, #f8f3ec 0%, var(--bg) 100%);
+        radial-gradient(circle at top left, rgba(255, 122, 89, 0.18), transparent 24%),
+        radial-gradient(circle at top right, rgba(57, 198, 167, 0.18), transparent 28%),
+        linear-gradient(180deg, #081018 0%, var(--bg) 100%);
     }
 
     .shell {
@@ -100,7 +100,7 @@
     .field input {
       width: 100%;
       border: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.8);
+      background: rgba(10, 14, 20, 0.88);
       color: var(--ink);
       border-radius: 14px;
       padding: 12px 14px;
@@ -137,7 +137,7 @@
     }
 
     .secondary {
-      background: rgba(30, 27, 24, 0.08);
+      background: rgba(255, 255, 255, 0.08);
       color: var(--ink);
     }
 
@@ -151,7 +151,7 @@
       gap: 10px;
       padding: 14px;
       border-radius: 18px;
-      background: rgba(30, 27, 24, 0.04);
+      background: rgba(255, 255, 255, 0.04);
       border: 1px solid var(--line);
     }
 
@@ -200,7 +200,7 @@
       min-height: 420px;
       padding: 24px;
       border-radius: 22px;
-      background: linear-gradient(180deg, rgba(255,255,255,0.75), rgba(255,255,255,0.52));
+      background: linear-gradient(180deg, rgba(10,14,20,0.88), rgba(14,20,28,0.72));
       border: 1px solid var(--line);
       font-size: clamp(18px, 2.1vw, 28px);
       line-height: 1.45;
@@ -219,7 +219,7 @@
       overflow: auto;
       padding: 16px;
       border-radius: 18px;
-      background: #171311;
+      background: #05080d;
       color: #f3eee7;
       font-family: "IBM Plex Mono", monospace;
       font-size: 12px;
@@ -230,18 +230,8 @@
       width: 100%;
       border-radius: 16px;
       border: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.68);
+      background: rgba(10, 14, 20, 0.72);
       padding: 8px;
-    }
-
-    .chart {
-      width: 100%;
-      height: 180px;
-      border-radius: 18px;
-      border: 1px solid var(--line);
-      background:
-        linear-gradient(180deg, rgba(255,255,255,0.84), rgba(255,255,255,0.58));
-      display: block;
     }
 
     @media (max-width: 900px) {
@@ -264,8 +254,8 @@
     <aside class="card sidebar">
       <div class="brand">
         <span class="eyebrow">Realtime ASR</span>
-        <h1>Qwen 1.7B on Tesla P40</h1>
-        <p class="subtitle">Microphone PCM streaming into a direct Qwen3ASRModel backend on this host. Tesla P40 runs local segment transcription with incremental partial updates and no vLLM dependency.</p>
+        <h1>Qwen 1.7B Realtime ASR</h1>
+        <p class="subtitle">Microphone PCM streaming into a direct Qwen3ASRModel backend on this host. The UI now uses a dark theme and keeps the transcript view focused on the text stream.</p>
       </div>
 
       <div class="field">
@@ -298,17 +288,15 @@
         <div class="status-row"><span>Session</span><strong id="sessionId">-</strong></div>
         <div class="status-row"><span>Live</span><strong id="liveState">waiting</strong></div>
         <div class="status-row"><span>Playback</span><strong id="playbackState">-</strong></div>
-        <div class="status-row"><span>Transcript Lag</span><strong id="lagState">-</strong></div>
       </div>
 
-      <p class="hint">Use `localhost` in a desktop browser so microphone permissions work without HTTPS. File replay streams the uploaded audio in realtime while showing the approximate gap between playback position and the latest transcript update.</p>
+      <p class="hint">Use `localhost` in a desktop browser so microphone permissions work without HTTPS. File replay streams the uploaded audio in realtime, and server-side transcription can run directly from the uploaded file.</p>
     </aside>
 
     <main class="card main">
       <div id="liveBadge" class="pulse" style="visibility:hidden">Streaming audio</div>
       <audio id="audioPlayer" class="player" controls preload="auto"></audio>
       <div id="transcript" class="transcript">Press Start Mic to begin realtime transcription.</div>
-      <canvas id="lagChart" class="chart" width="720" height="180"></canvas>
       <div id="log" class="log">ready</div>
     </main>
   </div>
@@ -323,7 +311,6 @@
     const stopBtn = document.getElementById("stopBtn");
     const clearBtn = document.getElementById("clearBtn");
     const audioPlayerEl = document.getElementById("audioPlayer");
-    const lagChartEl = document.getElementById("lagChart");
     const transcriptEl = document.getElementById("transcript");
     const logEl = document.getElementById("log");
     const connStateEl = document.getElementById("connState");
@@ -332,7 +319,6 @@
     const sessionIdEl = document.getElementById("sessionId");
     const liveStateEl = document.getElementById("liveState");
     const playbackStateEl = document.getElementById("playbackState");
-    const lagStateEl = document.getElementById("lagState");
     const liveBadgeEl = document.getElementById("liveBadge");
 
     let audioContext = null;
@@ -342,7 +328,7 @@
     let decodeContext = null;
     const defaultWsUrl = (() => {
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const host = window.location.host || "127.0.0.1:3003";
+      const host = window.location.host || "127.0.0.1:8000";
       return `${protocol}://${host}/v1/realtime`;
     })();
     wsUrlInput.value = defaultWsUrl;
@@ -356,16 +342,12 @@
     let closeTimer = null;
     let streamMode = "idle";
     let fileSendTimer = null;
-    let lagTimer = null;
     let filePcm = null;
     let fileSentSamples = 0;
-    let lastTranscriptPlaybackTime = 0;
     let objectUrl = null;
     let fileTranscriptionSource = null;
     let fileTranscriptionJobId = null;
     const TARGET_SAMPLE_RATE = 16000;
-    const lagSamples = [];
-    const MAX_LAG_SAMPLES = 240;
 
     function setConnectionState(text) {
       connStateEl.textContent = text;
@@ -383,97 +365,6 @@
 
     function setPlaybackState(text) {
       playbackStateEl.textContent = text;
-    }
-
-    function setLagState(text) {
-      lagStateEl.textContent = text;
-    }
-
-    function resetLagChart() {
-      lagSamples.length = 0;
-      drawLagChart();
-    }
-
-    function pushLagSample(playbackTime, lagSeconds) {
-      lagSamples.push({
-        playbackTime,
-        lagSeconds,
-      });
-      if (lagSamples.length > MAX_LAG_SAMPLES) {
-        lagSamples.shift();
-      }
-      drawLagChart();
-    }
-
-    function drawLagChart() {
-      const ctx = lagChartEl.getContext("2d");
-      const width = lagChartEl.width;
-      const height = lagChartEl.height;
-      ctx.clearRect(0, 0, width, height);
-
-      ctx.fillStyle = "rgba(255, 255, 255, 0.65)";
-      ctx.fillRect(0, 0, width, height);
-
-      const left = 42;
-      const right = width - 16;
-      const top = 16;
-      const bottom = height - 28;
-      const plotWidth = right - left;
-      const plotHeight = bottom - top;
-
-      ctx.strokeStyle = "rgba(30, 27, 24, 0.10)";
-      ctx.lineWidth = 1;
-      for (let i = 0; i <= 4; i++) {
-        const y = top + (plotHeight * i) / 4;
-        ctx.beginPath();
-        ctx.moveTo(left, y);
-        ctx.lineTo(right, y);
-        ctx.stroke();
-      }
-
-      ctx.fillStyle = "#6d6358";
-      ctx.font = "12px IBM Plex Sans, sans-serif";
-      ctx.fillText("Lag (s)", 12, 16);
-      ctx.fillText("Time", right - 26, height - 8);
-
-      if (lagSamples.length === 0) {
-        ctx.fillStyle = "#6d6358";
-        ctx.fillText("Lag graph will appear during file replay.", left, top + 22);
-        return;
-      }
-
-      const minTime = lagSamples[0].playbackTime;
-      const maxTime = lagSamples[lagSamples.length - 1].playbackTime;
-      const spanTime = Math.max(1, maxTime - minTime);
-      const maxLag = Math.max(1, ...lagSamples.map((item) => item.lagSeconds));
-
-      ctx.strokeStyle = "#cb5f2f";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      lagSamples.forEach((item, index) => {
-        const x = left + ((item.playbackTime - minTime) / spanTime) * plotWidth;
-        const y = bottom - (item.lagSeconds / maxLag) * plotHeight;
-        if (index === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      });
-      ctx.stroke();
-
-      const latest = lagSamples[lagSamples.length - 1];
-      const latestX = right;
-      const latestY = bottom - (latest.lagSeconds / maxLag) * plotHeight;
-      ctx.fillStyle = "#0d6b5c";
-      ctx.beginPath();
-      ctx.arc(latestX, latestY, 4, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = "#1e1b18";
-      ctx.fillText(`0`, 20, bottom + 4);
-      ctx.fillText(maxLag.toFixed(1), 10, top + 4);
-      ctx.fillText(minTime.toFixed(0), left, height - 8);
-      ctx.fillText(maxTime.toFixed(0), right - 18, height - 8);
     }
 
     function log(message) {
@@ -564,7 +455,7 @@
 
     function validateBrowserRealtimeSupport() {
       if (!window.isSecureContext && !isLocalHost(window.location.hostname)) {
-        throw new Error("Microphone access requires HTTPS or localhost. Open this UI on localhost, or put ports 3003 and 8010 behind TLS.");
+        throw new Error("Microphone access requires HTTPS or localhost. Open this UI on localhost, or put port 8000 behind TLS.");
       }
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("This browser does not expose getUserMedia in the current context.");
@@ -588,45 +479,6 @@
       }
     }
 
-    function updateLagMetrics() {
-      if (streamMode !== "file" || !audioPlayerEl.src) {
-        if (streamMode === "mic") {
-          setPlaybackState("live");
-          setLagState("live");
-        } else if (streamMode === "file-fast") {
-          setPlaybackState(`${(fileSentSamples / TARGET_SAMPLE_RATE).toFixed(1)}s fast`);
-          setLagState("-");
-        } else {
-          setPlaybackState("-");
-          setLagState("-");
-        }
-        if (streamMode !== "file") {
-          drawLagChart();
-        }
-        return;
-      }
-      const playbackTime = audioPlayerEl.currentTime || 0;
-      const lag = Math.max(0, playbackTime - lastTranscriptPlaybackTime);
-      setPlaybackState(`${playbackTime.toFixed(1)}s`);
-      setLagState(`${lag.toFixed(1)}s`);
-      pushLagSample(playbackTime, lag);
-    }
-
-    function startLagTimer() {
-      if (lagTimer) {
-        clearInterval(lagTimer);
-      }
-      lagTimer = setInterval(updateLagMetrics, 120);
-    }
-
-    function stopLagTimer() {
-      if (!lagTimer) {
-        return;
-      }
-      clearInterval(lagTimer);
-      lagTimer = null;
-    }
-
     function resetRealtimeState(mode) {
       streamMode = mode;
       stopRequested = false;
@@ -635,11 +487,8 @@
       sessionReady = false;
       filePcm = null;
       fileSentSamples = 0;
-      lastTranscriptPlaybackTime = 0;
       setSourceState(mode);
-      setLagState(mode === "file" ? "0.0s" : mode === "mic" ? "live" : "-");
       setPlaybackState(mode === "file" ? "0.0s" : mode === "mic" ? "live" : "-");
-      resetLagChart();
     }
 
     function stopFileTranscriptionStream() {
@@ -672,26 +521,14 @@
             return;
           }
           if (msg.type === "transcription.delta") {
-            if (streamMode === "file") {
-              lastTranscriptPlaybackTime = fileSentSamples / TARGET_SAMPLE_RATE;
-              updateLagMetrics();
-            }
             appendTranscript(msg.delta);
             return;
           }
           if (msg.type === "transcription.partial") {
-            if (streamMode === "file") {
-              lastTranscriptPlaybackTime = fileSentSamples / TARGET_SAMPLE_RATE;
-              updateLagMetrics();
-            }
             replaceTranscript(msg.text);
             return;
           }
           if (msg.type === "transcription.done") {
-            if (streamMode === "file") {
-              lastTranscriptPlaybackTime = audioPlayerEl.duration || fileSentSamples / TARGET_SAMPLE_RATE;
-              updateLagMetrics();
-            }
             replaceTranscript(msg.text || transcript);
             log(`done tokens=${msg.usage ? msg.usage.total_tokens : "?"}`);
             if (stopRequested && ws && ws.readyState === WebSocket.OPEN) {
@@ -713,11 +550,9 @@
           sentStartCommit = false;
           sessionIdEl.textContent = "-";
           stopFileSendLoop();
-          stopLagTimer();
           if (streamMode !== "idle") {
             setSourceState("none");
             setPlaybackState("-");
-            setLagState("-");
           }
           streamMode = "idle";
         });
@@ -742,7 +577,6 @@
       resetRealtimeState(mode);
       resetTranscript();
       transcriptEl.textContent = mode === "file" ? "Playing uploaded audio..." : "Listening...";
-      startLagTimer();
       await openSocket();
     }
 
@@ -773,7 +607,6 @@
         fileSentSamples = nextSamples;
       }
       flushPendingChunks();
-      updateLagMetrics();
     }
 
     function startFileSendLoop() {
@@ -847,7 +680,6 @@
           stopStreaming(true);
         };
         fileSentSamples = 0;
-        lastTranscriptPlaybackTime = 0;
         await audioPlayerEl.play();
         setRecorderState("recording");
         log(`file replay started: ${file.name}`);
@@ -875,7 +707,6 @@
         setRecorderState("processing");
         setSourceState("file-upload");
         setPlaybackState("api-stream");
-        setLagState("-");
         resetTranscript();
         transcriptEl.textContent = "Uploading file for API transcription...";
         liveStateEl.textContent = "streaming";
@@ -989,7 +820,6 @@
       }
       if (filePcm) {
         flushFilePlayback();
-        updateLagMetrics();
       }
       if (ws && ws.readyState === WebSocket.OPEN && sendFinal) {
         flushPendingChunks();
@@ -1011,8 +841,6 @@
         setPlaybackState("stopped");
       }
       if (!sendFinal) {
-        stopLagTimer();
-        setLagState("-");
       }
       log(`${streamMode === "file" || streamMode === "file-fast" ? "file stream" : "microphone stream"} stopped`);
       if (!sendFinal) {
@@ -1027,11 +855,9 @@
     stopBtn.addEventListener("click", () => stopStreaming(true));
     clearBtn.addEventListener("click", () => {
       resetTranscript();
-      resetLagChart();
       log("transcript cleared");
     });
 
-    drawLagChart();
   </script>
 </body>
 </html>

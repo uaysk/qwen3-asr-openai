@@ -147,7 +147,7 @@ if [[ -f "$ROOT_DIR/.env.runtime" ]]; then
 fi
 
 export HOST="${HOST:-0.0.0.0}"
-export PORT="${PORT:-3003}"
+export PORT="${PORT:-8000}"
 export QWEN_RT_LOCAL_FILES_ONLY="${QWEN_RT_LOCAL_FILES_ONLY:-false}"
 
 if [[ "$PRINT_ENV" == "1" ]]; then
