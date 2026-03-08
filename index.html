@@ -1,0 +1,1037 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Qwen ASR Realtime Demo</title>
+  <style>
+    :root {
+      --bg: #f4efe7;
+      --panel: rgba(255, 252, 245, 0.88);
+      --ink: #1e1b18;
+      --muted: #6d6358;
+      --accent: #0d6b5c;
+      --accent-2: #cb5f2f;
+      --line: rgba(30, 27, 24, 0.12);
+      --shadow: 0 24px 60px rgba(36, 27, 18, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "IBM Plex Sans", "Noto Sans KR", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(203, 95, 47, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(13, 107, 92, 0.18), transparent 30%),
+        linear-gradient(180deg, #f8f3ec 0%, var(--bg) 100%);
+    }
+
+    .shell {
+      width: min(1100px, calc(100vw - 32px));
+      margin: 24px auto;
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .sidebar {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .brand {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      width: fit-content;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(13, 107, 92, 0.12);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 32px;
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: 14px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .field label {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .field input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.8);
+      color: var(--ink);
+      border-radius: 14px;
+      padding: 12px 14px;
+      font: inherit;
+    }
+
+    .field input[type="file"] {
+      padding: 10px 12px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 14px;
+      padding: 12px 16px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 140ms ease, opacity 140ms ease, background 140ms ease;
+    }
+
+    button:hover { transform: translateY(-1px); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .secondary {
+      background: rgba(30, 27, 24, 0.08);
+      color: var(--ink);
+    }
+
+    .danger {
+      background: var(--accent-2);
+      color: white;
+    }
+
+    .status {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(30, 27, 24, 0.04);
+      border: 1px solid var(--line);
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 14px;
+    }
+
+    .status-row strong {
+      font-weight: 700;
+    }
+
+    .pulse {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .pulse::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 0 0 rgba(13, 107, 92, 0.4);
+      animation: pulse 1.4s infinite;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(13, 107, 92, 0.45); }
+      70% { box-shadow: 0 0 0 14px rgba(13, 107, 92, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(13, 107, 92, 0); }
+    }
+
+    .main {
+      padding: 24px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .transcript {
+      min-height: 420px;
+      padding: 24px;
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.75), rgba(255,255,255,0.52));
+      border: 1px solid var(--line);
+      font-size: clamp(18px, 2.1vw, 28px);
+      line-height: 1.45;
+      letter-spacing: -0.03em;
+      white-space: pre-wrap;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .log {
+      height: 180px;
+      overflow: auto;
+      padding: 16px;
+      border-radius: 18px;
+      background: #171311;
+      color: #f3eee7;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+
+    .player {
+      width: 100%;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.68);
+      padding: 8px;
+    }
+
+    .chart {
+      width: 100%;
+      height: 180px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.84), rgba(255,255,255,0.58));
+      display: block;
+    }
+
+    @media (max-width: 900px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      .transcript {
+        min-height: 300px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="card sidebar">
+      <div class="brand">
+        <span class="eyebrow">Realtime ASR</span>
+        <h1>Qwen 1.7B on Tesla P40</h1>
+        <p class="subtitle">Microphone PCM streaming into a direct Qwen3ASRModel backend on this host. Tesla P40 runs local segment transcription with incremental partial updates and no vLLM dependency.</p>
+      </div>
+
+      <div class="field">
+        <label for="wsUrl">WebSocket URL</label>
+        <input id="wsUrl" value="">
+      </div>
+
+      <div class="field">
+        <label for="modelName">Model Name</label>
+        <input id="modelName" value="qwen3-asr-rt">
+      </div>
+
+      <div class="field">
+        <label for="audioFile">Audio File Replay</label>
+        <input id="audioFile" type="file" accept="audio/*">
+      </div>
+
+      <div class="controls">
+        <button id="startBtn" class="primary">Start Mic</button>
+        <button id="playFileBtn" class="secondary">Play File</button>
+        <button id="transcribeFileBtn" class="secondary">Transcribe File</button>
+        <button id="stopBtn" class="danger" disabled>Stop</button>
+        <button id="clearBtn" class="secondary">Clear</button>
+      </div>
+
+      <div class="status">
+        <div class="status-row"><span>Connection</span><strong id="connState">idle</strong></div>
+        <div class="status-row"><span>Recorder</span><strong id="recState">stopped</strong></div>
+        <div class="status-row"><span>Source</span><strong id="sourceState">none</strong></div>
+        <div class="status-row"><span>Session</span><strong id="sessionId">-</strong></div>
+        <div class="status-row"><span>Live</span><strong id="liveState">waiting</strong></div>
+        <div class="status-row"><span>Playback</span><strong id="playbackState">-</strong></div>
+        <div class="status-row"><span>Transcript Lag</span><strong id="lagState">-</strong></div>
+      </div>
+
+      <p class="hint">Use `localhost` in a desktop browser so microphone permissions work without HTTPS. File replay streams the uploaded audio in realtime while showing the approximate gap between playback position and the latest transcript update.</p>
+    </aside>
+
+    <main class="card main">
+      <div id="liveBadge" class="pulse" style="visibility:hidden">Streaming audio</div>
+      <audio id="audioPlayer" class="player" controls preload="auto"></audio>
+      <div id="transcript" class="transcript">Press Start Mic to begin realtime transcription.</div>
+      <canvas id="lagChart" class="chart" width="720" height="180"></canvas>
+      <div id="log" class="log">ready</div>
+    </main>
+  </div>
+
+  <script>
+    const wsUrlInput = document.getElementById("wsUrl");
+    const modelNameInput = document.getElementById("modelName");
+    const audioFileInput = document.getElementById("audioFile");
+    const playFileBtn = document.getElementById("playFileBtn");
+    const transcribeFileBtn = document.getElementById("transcribeFileBtn");
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const audioPlayerEl = document.getElementById("audioPlayer");
+    const lagChartEl = document.getElementById("lagChart");
+    const transcriptEl = document.getElementById("transcript");
+    const logEl = document.getElementById("log");
+    const connStateEl = document.getElementById("connState");
+    const recStateEl = document.getElementById("recState");
+    const sourceStateEl = document.getElementById("sourceState");
+    const sessionIdEl = document.getElementById("sessionId");
+    const liveStateEl = document.getElementById("liveState");
+    const playbackStateEl = document.getElementById("playbackState");
+    const lagStateEl = document.getElementById("lagState");
+    const liveBadgeEl = document.getElementById("liveBadge");
+
+    let audioContext = null;
+    let mediaStream = null;
+    let sourceNode = null;
+    let processorNode = null;
+    let decodeContext = null;
+    const defaultWsUrl = (() => {
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      const host = window.location.host || "127.0.0.1:3003";
+      return `${protocol}://${host}/v1/realtime`;
+    })();
+    wsUrlInput.value = defaultWsUrl;
+
+    let ws = null;
+    let sessionReady = false;
+    let pendingChunks = [];
+    let sentStartCommit = false;
+    let transcript = "";
+    let stopRequested = false;
+    let closeTimer = null;
+    let streamMode = "idle";
+    let fileSendTimer = null;
+    let lagTimer = null;
+    let filePcm = null;
+    let fileSentSamples = 0;
+    let lastTranscriptPlaybackTime = 0;
+    let objectUrl = null;
+    let fileTranscriptionSource = null;
+    let fileTranscriptionJobId = null;
+    const TARGET_SAMPLE_RATE = 16000;
+    const lagSamples = [];
+    const MAX_LAG_SAMPLES = 240;
+
+    function setConnectionState(text) {
+      connStateEl.textContent = text;
+    }
+
+    function setRecorderState(text) {
+      recStateEl.textContent = text;
+      liveBadgeEl.style.visibility = text === "recording" ? "visible" : "hidden";
+      liveStateEl.textContent = text === "recording" ? "streaming" : "waiting";
+    }
+
+    function setSourceState(text) {
+      sourceStateEl.textContent = text;
+    }
+
+    function setPlaybackState(text) {
+      playbackStateEl.textContent = text;
+    }
+
+    function setLagState(text) {
+      lagStateEl.textContent = text;
+    }
+
+    function resetLagChart() {
+      lagSamples.length = 0;
+      drawLagChart();
+    }
+
+    function pushLagSample(playbackTime, lagSeconds) {
+      lagSamples.push({
+        playbackTime,
+        lagSeconds,
+      });
+      if (lagSamples.length > MAX_LAG_SAMPLES) {
+        lagSamples.shift();
+      }
+      drawLagChart();
+    }
+
+    function drawLagChart() {
+      const ctx = lagChartEl.getContext("2d");
+      const width = lagChartEl.width;
+      const height = lagChartEl.height;
+      ctx.clearRect(0, 0, width, height);
+
+      ctx.fillStyle = "rgba(255, 255, 255, 0.65)";
+      ctx.fillRect(0, 0, width, height);
+
+      const left = 42;
+      const right = width - 16;
+      const top = 16;
+      const bottom = height - 28;
+      const plotWidth = right - left;
+      const plotHeight = bottom - top;
+
+      ctx.strokeStyle = "rgba(30, 27, 24, 0.10)";
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = top + (plotHeight * i) / 4;
+        ctx.beginPath();
+        ctx.moveTo(left, y);
+        ctx.lineTo(right, y);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = "#6d6358";
+      ctx.font = "12px IBM Plex Sans, sans-serif";
+      ctx.fillText("Lag (s)", 12, 16);
+      ctx.fillText("Time", right - 26, height - 8);
+
+      if (lagSamples.length === 0) {
+        ctx.fillStyle = "#6d6358";
+        ctx.fillText("Lag graph will appear during file replay.", left, top + 22);
+        return;
+      }
+
+      const minTime = lagSamples[0].playbackTime;
+      const maxTime = lagSamples[lagSamples.length - 1].playbackTime;
+      const spanTime = Math.max(1, maxTime - minTime);
+      const maxLag = Math.max(1, ...lagSamples.map((item) => item.lagSeconds));
+
+      ctx.strokeStyle = "#cb5f2f";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      lagSamples.forEach((item, index) => {
+        const x = left + ((item.playbackTime - minTime) / spanTime) * plotWidth;
+        const y = bottom - (item.lagSeconds / maxLag) * plotHeight;
+        if (index === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.stroke();
+
+      const latest = lagSamples[lagSamples.length - 1];
+      const latestX = right;
+      const latestY = bottom - (latest.lagSeconds / maxLag) * plotHeight;
+      ctx.fillStyle = "#0d6b5c";
+      ctx.beginPath();
+      ctx.arc(latestX, latestY, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#1e1b18";
+      ctx.fillText(`0`, 20, bottom + 4);
+      ctx.fillText(maxLag.toFixed(1), 10, top + 4);
+      ctx.fillText(minTime.toFixed(0), left, height - 8);
+      ctx.fillText(maxTime.toFixed(0), right - 18, height - 8);
+    }
+
+    function log(message) {
+      const stamp = new Date().toLocaleTimeString();
+      logEl.textContent += `\n[${stamp}] ${message}`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function appendTranscript(delta) {
+      transcript += delta;
+      transcriptEl.textContent = transcript || "Listening...";
+    }
+
+    function replaceTranscript(text) {
+      transcript = text || "";
+      transcriptEl.textContent = transcript || "Listening...";
+    }
+
+    function resetTranscript() {
+      transcript = "";
+      transcriptEl.textContent = "Press Start Mic to begin realtime transcription.";
+    }
+
+    function floatTo16BitPCM(float32) {
+      const pcm = new Int16Array(float32.length);
+      for (let i = 0; i < float32.length; i++) {
+        const sample = Math.max(-1, Math.min(1, float32[i]));
+        pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      }
+      return pcm;
+    }
+
+    function downsampleBuffer(buffer, inputRate, targetRate) {
+      if (inputRate === targetRate) {
+        return buffer;
+      }
+      const ratio = inputRate / targetRate;
+      const length = Math.round(buffer.length / ratio);
+      const result = new Float32Array(length);
+      let offsetResult = 0;
+      let offsetBuffer = 0;
+      while (offsetResult < result.length) {
+        const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+        let accum = 0;
+        let count = 0;
+        for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+          accum += buffer[i];
+          count += 1;
+        }
+        result[offsetResult] = count > 0 ? accum / count : 0;
+        offsetResult += 1;
+        offsetBuffer = nextOffsetBuffer;
+      }
+      return result;
+    }
+
+    function pcmToBase64(pcm16) {
+      const bytes = new Uint8Array(pcm16.buffer);
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      return btoa(binary);
+    }
+
+    function interleaveToMono(audioBuffer) {
+      if (audioBuffer.numberOfChannels === 1) {
+        return new Float32Array(audioBuffer.getChannelData(0));
+      }
+      const length = audioBuffer.length;
+      const mono = new Float32Array(length);
+      for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+        const data = audioBuffer.getChannelData(channel);
+        for (let i = 0; i < length; i++) {
+          mono[i] += data[i];
+        }
+      }
+      for (let i = 0; i < length; i++) {
+        mono[i] /= audioBuffer.numberOfChannels;
+      }
+      return mono;
+    }
+
+    function isLocalHost(hostname) {
+      return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    }
+
+    function validateBrowserRealtimeSupport() {
+      if (!window.isSecureContext && !isLocalHost(window.location.hostname)) {
+        throw new Error("Microphone access requires HTTPS or localhost. Open this UI on localhost, or put ports 3003 and 8010 behind TLS.");
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("This browser does not expose getUserMedia in the current context.");
+      }
+      if (window.location.protocol === "https:" && wsUrlInput.value.trim().startsWith("ws://")) {
+        throw new Error("HTTPS page cannot use ws://. Use a wss:// realtime endpoint.");
+      }
+    }
+
+    function flushPendingChunks() {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !sessionReady) {
+        return;
+      }
+      if (!sentStartCommit) {
+        ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+        sentStartCommit = true;
+      }
+      while (pendingChunks.length > 0) {
+        const chunk = pendingChunks.shift();
+        ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio: chunk }));
+      }
+    }
+
+    function updateLagMetrics() {
+      if (streamMode !== "file" || !audioPlayerEl.src) {
+        if (streamMode === "mic") {
+          setPlaybackState("live");
+          setLagState("live");
+        } else if (streamMode === "file-fast") {
+          setPlaybackState(`${(fileSentSamples / TARGET_SAMPLE_RATE).toFixed(1)}s fast`);
+          setLagState("-");
+        } else {
+          setPlaybackState("-");
+          setLagState("-");
+        }
+        if (streamMode !== "file") {
+          drawLagChart();
+        }
+        return;
+      }
+      const playbackTime = audioPlayerEl.currentTime || 0;
+      const lag = Math.max(0, playbackTime - lastTranscriptPlaybackTime);
+      setPlaybackState(`${playbackTime.toFixed(1)}s`);
+      setLagState(`${lag.toFixed(1)}s`);
+      pushLagSample(playbackTime, lag);
+    }
+
+    function startLagTimer() {
+      if (lagTimer) {
+        clearInterval(lagTimer);
+      }
+      lagTimer = setInterval(updateLagMetrics, 120);
+    }
+
+    function stopLagTimer() {
+      if (!lagTimer) {
+        return;
+      }
+      clearInterval(lagTimer);
+      lagTimer = null;
+    }
+
+    function resetRealtimeState(mode) {
+      streamMode = mode;
+      stopRequested = false;
+      pendingChunks = [];
+      sentStartCommit = false;
+      sessionReady = false;
+      filePcm = null;
+      fileSentSamples = 0;
+      lastTranscriptPlaybackTime = 0;
+      setSourceState(mode);
+      setLagState(mode === "file" ? "0.0s" : mode === "mic" ? "live" : "-");
+      setPlaybackState(mode === "file" ? "0.0s" : mode === "mic" ? "live" : "-");
+      resetLagChart();
+    }
+
+    function stopFileTranscriptionStream() {
+      if (fileTranscriptionSource) {
+        fileTranscriptionSource.close();
+        fileTranscriptionSource = null;
+      }
+      fileTranscriptionJobId = null;
+    }
+
+    async function openSocket() {
+      return new Promise((resolve, reject) => {
+        const socket = new WebSocket(wsUrlInput.value.trim());
+        ws = socket;
+        setConnectionState("connecting");
+        log(`connecting ${socket.url}`);
+
+        socket.addEventListener("open", () => {
+          setConnectionState("open");
+        });
+
+        socket.addEventListener("message", (event) => {
+          const msg = JSON.parse(event.data);
+          if (msg.type === "session.created") {
+            sessionReady = true;
+            sessionIdEl.textContent = msg.id;
+            ws.send(JSON.stringify({ type: "session.update", model: modelNameInput.value.trim() }));
+            flushPendingChunks();
+            resolve();
+            return;
+          }
+          if (msg.type === "transcription.delta") {
+            if (streamMode === "file") {
+              lastTranscriptPlaybackTime = fileSentSamples / TARGET_SAMPLE_RATE;
+              updateLagMetrics();
+            }
+            appendTranscript(msg.delta);
+            return;
+          }
+          if (msg.type === "transcription.partial") {
+            if (streamMode === "file") {
+              lastTranscriptPlaybackTime = fileSentSamples / TARGET_SAMPLE_RATE;
+              updateLagMetrics();
+            }
+            replaceTranscript(msg.text);
+            return;
+          }
+          if (msg.type === "transcription.done") {
+            if (streamMode === "file") {
+              lastTranscriptPlaybackTime = audioPlayerEl.duration || fileSentSamples / TARGET_SAMPLE_RATE;
+              updateLagMetrics();
+            }
+            replaceTranscript(msg.text || transcript);
+            log(`done tokens=${msg.usage ? msg.usage.total_tokens : "?"}`);
+            if (stopRequested && ws && ws.readyState === WebSocket.OPEN) {
+              ws.close();
+            }
+            return;
+          }
+          if (msg.type === "error") {
+            log(`error ${msg.error}`);
+            reject(new Error(msg.error));
+            return;
+          }
+          log(`event ${event.data}`);
+        });
+
+        socket.addEventListener("close", () => {
+          setConnectionState("closed");
+          sessionReady = false;
+          sentStartCommit = false;
+          sessionIdEl.textContent = "-";
+          stopFileSendLoop();
+          stopLagTimer();
+          if (streamMode !== "idle") {
+            setSourceState("none");
+            setPlaybackState("-");
+            setLagState("-");
+          }
+          streamMode = "idle";
+        });
+
+        socket.addEventListener("error", () => {
+          setConnectionState("error");
+          reject(new Error("websocket connection failed"));
+        });
+      });
+    }
+
+    async function openRealtimeSession(mode) {
+      startBtn.disabled = true;
+      playFileBtn.disabled = true;
+      transcribeFileBtn.disabled = true;
+      clearBtn.disabled = true;
+      stopBtn.disabled = false;
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+        closeTimer = null;
+      }
+      resetRealtimeState(mode);
+      resetTranscript();
+      transcriptEl.textContent = mode === "file" ? "Playing uploaded audio..." : "Listening...";
+      startLagTimer();
+      await openSocket();
+    }
+
+    async function decodeSelectedFile(file) {
+      if (!decodeContext) {
+        decodeContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const bytes = await file.arrayBuffer();
+      const decoded = await decodeContext.decodeAudioData(bytes.slice(0));
+      const mono = interleaveToMono(decoded);
+      const resampled = downsampleBuffer(mono, decoded.sampleRate, TARGET_SAMPLE_RATE);
+      return resampled;
+    }
+
+    function flushFilePlayback() {
+      if (!filePcm || !ws || ws.readyState !== WebSocket.OPEN || !sessionReady) {
+        return;
+      }
+      const targetSamples = Math.min(
+        filePcm.length,
+        Math.floor((audioPlayerEl.currentTime || 0) * TARGET_SAMPLE_RATE),
+      );
+      while (fileSentSamples < targetSamples) {
+        const nextSamples = Math.min(filePcm.length, fileSentSamples + 3200);
+        const chunk = filePcm.subarray(fileSentSamples, nextSamples);
+        const pcm16 = floatTo16BitPCM(chunk);
+        pendingChunks.push(pcmToBase64(pcm16));
+        fileSentSamples = nextSamples;
+      }
+      flushPendingChunks();
+      updateLagMetrics();
+    }
+
+    function startFileSendLoop() {
+      if (fileSendTimer) {
+        clearInterval(fileSendTimer);
+      }
+      fileSendTimer = setInterval(flushFilePlayback, 80);
+    }
+
+    function stopFileSendLoop() {
+      if (!fileSendTimer) {
+        return;
+      }
+      clearInterval(fileSendTimer);
+      fileSendTimer = null;
+    }
+
+    async function startStreaming() {
+      try {
+        validateBrowserRealtimeSupport();
+        await openRealtimeSession("mic");
+
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        sourceNode = audioContext.createMediaStreamSource(mediaStream);
+        processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+
+        processorNode.onaudioprocess = (event) => {
+          const input = event.inputBuffer.getChannelData(0);
+          const mono = new Float32Array(input);
+          const downsampled = downsampleBuffer(mono, audioContext.sampleRate, 16000);
+          const pcm16 = floatTo16BitPCM(downsampled);
+          pendingChunks.push(pcmToBase64(pcm16));
+          flushPendingChunks();
+        };
+
+        sourceNode.connect(processorNode);
+        processorNode.connect(audioContext.destination);
+        setRecorderState("recording");
+        log("microphone stream started");
+      } catch (error) {
+        log(`start failed: ${error.message}`);
+        await stopStreaming(false);
+      }
+    }
+
+    async function startFileReplay() {
+      const file = audioFileInput.files && audioFileInput.files[0];
+      if (!file) {
+        log("select an audio file first");
+        return;
+      }
+      try {
+        await openRealtimeSession("file");
+        filePcm = await decodeSelectedFile(file);
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+        }
+        objectUrl = URL.createObjectURL(file);
+        audioPlayerEl.src = objectUrl;
+        audioPlayerEl.currentTime = 0;
+        audioPlayerEl.onended = () => {
+          stopStreaming(true);
+        };
+        fileSentSamples = 0;
+        lastTranscriptPlaybackTime = 0;
+        await audioPlayerEl.play();
+        setRecorderState("recording");
+        log(`file replay started: ${file.name}`);
+        startFileSendLoop();
+      } catch (error) {
+        log(`file replay failed: ${error.message}`);
+        await stopStreaming(false);
+      }
+    }
+
+    async function startServerFileTranscription() {
+      const file = audioFileInput.files && audioFileInput.files[0];
+      if (!file) {
+        log("select an audio file first");
+        return;
+      }
+      try {
+        stopFileTranscriptionStream();
+        startBtn.disabled = true;
+        playFileBtn.disabled = true;
+        transcribeFileBtn.disabled = true;
+        clearBtn.disabled = true;
+        stopBtn.disabled = false;
+        setConnectionState("processing");
+        setRecorderState("processing");
+        setSourceState("file-upload");
+        setPlaybackState("api-stream");
+        setLagState("-");
+        resetTranscript();
+        transcriptEl.textContent = "Uploading file for API transcription...";
+        liveStateEl.textContent = "streaming";
+        log(`api file transcription started: ${file.name}`);
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("model", modelNameInput.value.trim());
+        formData.append("stream", "true");
+        formData.append("response_format", "json");
+
+        const response = await fetch("/v1/audio/transcriptions", {
+          method: "POST",
+          body: formData,
+        });
+        if (!response.ok || !response.body) {
+          throw new Error(`transcription request failed (${response.status})`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          while (buffer.includes("\n\n")) {
+            const splitIndex = buffer.indexOf("\n\n");
+            const event = buffer.slice(0, splitIndex);
+            buffer = buffer.slice(splitIndex + 2);
+            const dataLines = event
+              .split("\n")
+              .filter((line) => line.startsWith("data:"))
+              .map((line) => line.slice(5).trim());
+            if (dataLines.length === 0) {
+              continue;
+            }
+            const data = dataLines.join("\n");
+            if (data === "[DONE]") {
+              continue;
+            }
+            const msg = JSON.parse(data);
+            if (msg.type === "transcription.partial") {
+              replaceTranscript(msg.text || "");
+              continue;
+            }
+            if (msg.type === "transcription.delta") {
+              appendTranscript(msg.delta || "");
+              continue;
+            }
+            if (msg.type === "transcription.done") {
+              replaceTranscript(msg.text || transcript);
+              log(`api transcription done tokens=${msg.usage ? msg.usage.total_tokens : "?"}`);
+              break;
+            }
+            if (msg.type === "error") {
+              throw new Error(msg.error || "transcription error");
+            }
+          }
+        }
+
+        stopBtn.disabled = true;
+        startBtn.disabled = false;
+        playFileBtn.disabled = false;
+        transcribeFileBtn.disabled = false;
+        clearBtn.disabled = false;
+        setConnectionState("open");
+        setRecorderState("stopped");
+        setSourceState("none");
+        setPlaybackState("-");
+        liveStateEl.textContent = "waiting";
+      } catch (error) {
+        log(`file transcription failed: ${error.message}`);
+        await stopStreaming(false);
+      }
+    }
+
+    async function stopStreaming(sendFinal = true) {
+      stopBtn.disabled = true;
+      startBtn.disabled = false;
+      playFileBtn.disabled = false;
+      transcribeFileBtn.disabled = false;
+      clearBtn.disabled = false;
+      stopFileSendLoop();
+      if (fileTranscriptionJobId) {
+        fetch(`/v1/file-transcriptions/${fileTranscriptionJobId}/cancel`, { method: "POST" }).catch(() => {});
+        stopFileTranscriptionStream();
+      }
+
+      if (processorNode) {
+        processorNode.disconnect();
+        processorNode.onaudioprocess = null;
+        processorNode = null;
+      }
+      if (sourceNode) {
+        sourceNode.disconnect();
+        sourceNode = null;
+      }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        mediaStream = null;
+      }
+      if (audioContext) {
+        await audioContext.close();
+        audioContext = null;
+      }
+      if (audioPlayerEl.src) {
+        audioPlayerEl.pause();
+      }
+      if (filePcm) {
+        flushFilePlayback();
+        updateLagMetrics();
+      }
+      if (ws && ws.readyState === WebSocket.OPEN && sendFinal) {
+        flushPendingChunks();
+        stopRequested = true;
+        ws.send(JSON.stringify({ type: "input_audio_buffer.commit", final: true }));
+        closeTimer = setTimeout(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            log("final response timeout; closing websocket");
+            ws.close();
+          }
+          closeTimer = null;
+        }, 8000);
+      } else if (ws) {
+        ws.close();
+      }
+
+      setRecorderState("stopped");
+      if (streamMode === "file" || streamMode === "file-fast") {
+        setPlaybackState("stopped");
+      }
+      if (!sendFinal) {
+        stopLagTimer();
+        setLagState("-");
+      }
+      log(`${streamMode === "file" || streamMode === "file-fast" ? "file stream" : "microphone stream"} stopped`);
+      if (!sendFinal) {
+        setSourceState("none");
+        streamMode = "idle";
+      }
+    }
+
+    startBtn.addEventListener("click", startStreaming);
+    playFileBtn.addEventListener("click", startFileReplay);
+    transcribeFileBtn.addEventListener("click", startServerFileTranscription);
+    stopBtn.addEventListener("click", () => stopStreaming(true));
+    clearBtn.addEventListener("click", () => {
+      resetTranscript();
+      resetLagChart();
+      log("transcript cleared");
+    });
+
+    drawLagChart();
+  </script>
+</body>
+</html>
