@@ -319,9 +319,17 @@ def get_speech_timestamps(
 
 
 def transcribe_audio(audio: np.ndarray) -> str:
+    clips = build_speech_clips(audio)
+    if not clips:
+        return ""
+    texts = transcribe_clips(clips)
+    return " ".join(texts).strip()
+
+
+def build_speech_clips(audio: np.ndarray) -> list[tuple[np.ndarray, int]]:
     audio = np.asarray(audio, dtype=np.float32)
     if audio.size == 0:
-        return ""
+        return []
 
     vad_options = EnergyVadOptions(
         min_silence_duration_ms=700,
@@ -341,9 +349,12 @@ def transcribe_audio(audio: np.ndarray) -> str:
         if clip.size < 800:
             continue
         clips.append((clip, SAMPLE_RATE))
-    if not clips:
-        return ""
+    return clips
 
+
+def transcribe_clips(clips: list[tuple[np.ndarray, int]]) -> list[str]:
+    if not clips:
+        return []
     with _INFER_LOCK:
         results = get_model().transcribe(clips, context=ASR_CONTEXT)
 
@@ -352,7 +363,7 @@ def transcribe_audio(audio: np.ndarray) -> str:
         text = (getattr(result, "text", "") or "").strip()
         if text:
             texts.append(text)
-    return " ".join(texts).strip()
+    return texts
 
 
 def append_without_overlap(
@@ -624,6 +635,14 @@ def _transcribe_with_activity(audio: np.ndarray) -> str:
         inference_finished()
 
 
+def _transcribe_clips_with_activity(clips: list[tuple[np.ndarray, int]]) -> list[str]:
+    inference_started()
+    try:
+        return transcribe_clips(clips)
+    finally:
+        inference_finished()
+
+
 async def generation_loop(state: SessionState) -> None:
     try:
         while not state.closed:
@@ -758,40 +777,38 @@ async def create_audio_transcription(
         )
 
     async def event_iter():
-        state = SessionState()
-        queue: asyncio.Queue[str] = asyncio.Queue()
+        clips = build_speech_clips(audio)
+        if not clips:
+            payload = {"type": "transcription.done", "text": "", "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
-        async def sink(payload: dict) -> None:
-            await queue.put(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n")
+        committed_text = ""
+        total = len(clips)
+        for idx, clip in enumerate(clips, start=1):
+            texts = await asyncio.to_thread(_transcribe_clips_with_activity, [clip])
+            segment_text = texts[0] if texts else ""
+            if segment_text:
+                committed_text = append_without_overlap(committed_text, segment_text)
+                partial_payload = {
+                    "type": "transcription.partial",
+                    "text": committed_text,
+                    "completed_segments": idx,
+                    "total_segments": total,
+                }
+                yield f"data: {json.dumps(partial_payload, ensure_ascii=False)}\n\n"
 
-        state.event_sink = sink
-        state.generation_task = asyncio.create_task(generation_loop(state))
-
-        feed_chunk_samples = 3200
-        total_samples = int(audio.size)
-        cursor = 0
-        while cursor < total_samples:
-            next_cursor = min(total_samples, cursor + feed_chunk_samples)
-            state.audio = np.concatenate((state.audio, audio[cursor:next_cursor]), axis=0)
-            cursor = next_cursor
-            state.decode_event.set()
-            await asyncio.sleep(0)
-
-        state.final_requested = True
-        state.decode_event.set()
-
-        producer_done = False
-        while not producer_done or not queue.empty():
-            if not producer_done and state.generation_task.done():
-                producer_done = True
-            try:
-                item = await asyncio.wait_for(queue.get(), timeout=0.2)
-                yield item
-            except TimeoutError:
-                if producer_done:
-                    break
-
-        await state.generation_task
+        done_payload = {
+            "type": "transcription.done",
+            "text": committed_text,
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": len(committed_text),
+                "total_tokens": len(committed_text),
+            },
+        }
+        yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
