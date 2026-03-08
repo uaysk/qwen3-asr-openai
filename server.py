@@ -40,6 +40,7 @@ os.environ.setdefault("XDG_CACHE_HOME", str(CACHE_ROOT / "xdg"))
 
 MODEL_NAME = os.environ.get("QWEN_RT_MODEL_NAME", "qwen3-asr-rt")
 MODEL_ID = os.environ.get("QWEN_RT_MODEL_ID", "Qwen/Qwen3-ASR-1.7B")
+MODEL_PATH = os.environ.get("QWEN_RT_MODEL_PATH")
 SAMPLE_RATE = 16000
 COMMIT_SECONDS = float(os.environ.get("QWEN_RT_COMMIT_SECONDS", "8.0"))
 PARTIAL_MIN_SECONDS = float(os.environ.get("QWEN_RT_PARTIAL_MIN_SECONDS", "2.0"))
@@ -108,6 +109,21 @@ def env_flag(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def resolve_cached_model_path() -> str | None:
+    if MODEL_PATH and Path(MODEL_PATH).exists():
+        return MODEL_PATH
+
+    hf_home = Path(os.environ.get("HF_HOME", str(CACHE_ROOT / "hf")))
+    snapshots_dir = hf_home / "hub" / f"models--{MODEL_ID.replace('/', '--')}" / "snapshots"
+    if not snapshots_dir.is_dir():
+        return None
+
+    snapshots = sorted(path for path in snapshots_dir.iterdir() if path.is_dir())
+    if not snapshots:
+        return None
+    return str(snapshots[-1])
+
+
 @lru_cache(maxsize=1)
 def select_runtime_config() -> RuntimeConfig:
     local_files_only = env_flag("QWEN_RT_LOCAL_FILES_ONLY", False)
@@ -158,8 +174,9 @@ def get_model() -> Qwen3ASRModel:
     with _MODEL_LOCK:
         if _MODEL is None:
             runtime = select_runtime_config()
+            model_source = resolve_cached_model_path() or MODEL_ID
             _MODEL = Qwen3ASRModel.from_pretrained(
-                MODEL_ID,
+                model_source,
                 device_map=runtime.device_map,
                 dtype=runtime.dtype,
                 attn_implementation=runtime.attn_implementation,

@@ -152,6 +152,18 @@ def choose_torch_profile(gpu: GpuInfo | None) -> TorchProfile:
     )
 
 
+def repo_cache_dir(model_id: str) -> Path:
+    return ROOT / ".cache" / "hf" / "hub" / f"models--{model_id.replace('/', '--')}"
+
+
+def resolve_snapshot_dir(model_id: str) -> Path | None:
+    snapshots_dir = repo_cache_dir(model_id) / "snapshots"
+    if not snapshots_dir.is_dir():
+        return None
+    snapshots = sorted(path for path in snapshots_dir.iterdir() if path.is_dir())
+    return snapshots[-1] if snapshots else None
+
+
 def build_runtime_env(gpu: GpuInfo | None) -> dict[str, str]:
     env = {
         "HF_HOME": str(ROOT / ".cache" / "hf"),
@@ -256,7 +268,13 @@ def main() -> None:
     torch_profile = choose_torch_profile(gpu)
     runtime_env = build_runtime_env(gpu)
     final_runtime_env = dict(runtime_env)
-    if not args.skip_model_download:
+    cached_snapshot = resolve_snapshot_dir(MODEL_ID)
+    if cached_snapshot is not None:
+        final_runtime_env["QWEN_RT_MODEL_PATH"] = str(cached_snapshot)
+        final_runtime_env["QWEN_RT_LOCAL_FILES_ONLY"] = "true"
+        final_runtime_env["HF_HUB_OFFLINE"] = "1"
+        final_runtime_env["TRANSFORMERS_OFFLINE"] = "1"
+    elif not args.skip_model_download:
         final_runtime_env["QWEN_RT_LOCAL_FILES_ONLY"] = "true"
         final_runtime_env["HF_HUB_OFFLINE"] = "1"
         final_runtime_env["TRANSFORMERS_OFFLINE"] = "1"
@@ -290,6 +308,11 @@ def main() -> None:
 
     if not args.skip_model_download:
         maybe_download_model(runtime_env, dry_run=args.dry_run)
+        cached_snapshot = resolve_snapshot_dir(MODEL_ID)
+        if cached_snapshot is not None:
+            final_runtime_env["QWEN_RT_MODEL_PATH"] = str(cached_snapshot)
+        runtime_env = final_runtime_env
+    elif cached_snapshot is not None:
         runtime_env = final_runtime_env
 
     write_runtime_env(runtime_env, dry_run=args.dry_run)
