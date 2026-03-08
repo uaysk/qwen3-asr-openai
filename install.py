@@ -152,16 +152,23 @@ def choose_torch_profile(gpu: GpuInfo | None) -> TorchProfile:
     )
 
 
-def repo_cache_dir(model_id: str) -> Path:
-    return ROOT / ".cache" / "hf" / "hub" / f"models--{model_id.replace('/', '--')}"
+def repo_cache_dirs(model_id: str) -> list[Path]:
+    model_key = f"models--{model_id.replace('/', '--')}"
+    return [
+        ROOT / ".cache" / "hf" / model_key,
+        ROOT / ".cache" / "hf" / "hub" / model_key,
+    ]
 
 
 def resolve_snapshot_dir(model_id: str) -> Path | None:
-    snapshots_dir = repo_cache_dir(model_id) / "snapshots"
-    if not snapshots_dir.is_dir():
-        return None
-    snapshots = sorted(path for path in snapshots_dir.iterdir() if path.is_dir())
-    return snapshots[-1] if snapshots else None
+    for repo_dir in repo_cache_dirs(model_id):
+        snapshots_dir = repo_dir / "snapshots"
+        if not snapshots_dir.is_dir():
+            continue
+        snapshots = sorted(path for path in snapshots_dir.iterdir() if path.is_dir())
+        if snapshots:
+            return snapshots[-1]
+    return None
 
 
 def build_runtime_env(gpu: GpuInfo | None) -> dict[str, str]:

@@ -114,14 +114,19 @@ def resolve_cached_model_path() -> str | None:
         return MODEL_PATH
 
     hf_home = Path(os.environ.get("HF_HOME", str(CACHE_ROOT / "hf")))
-    snapshots_dir = hf_home / "hub" / f"models--{MODEL_ID.replace('/', '--')}" / "snapshots"
-    if not snapshots_dir.is_dir():
-        return None
-
-    snapshots = sorted(path for path in snapshots_dir.iterdir() if path.is_dir())
-    if not snapshots:
-        return None
-    return str(snapshots[-1])
+    model_key = f"models--{MODEL_ID.replace('/', '--')}"
+    candidate_roots = [
+        hf_home / model_key,
+        hf_home / "hub" / model_key,
+    ]
+    for repo_dir in candidate_roots:
+        snapshots_dir = repo_dir / "snapshots"
+        if not snapshots_dir.is_dir():
+            continue
+        snapshots = sorted(path for path in snapshots_dir.iterdir() if path.is_dir())
+        if snapshots:
+            return str(snapshots[-1])
+    return None
 
 
 @lru_cache(maxsize=1)
