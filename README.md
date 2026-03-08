@@ -23,6 +23,7 @@ What the installer does:
 - installs server dependencies
 - writes `.env.runtime` with runtime settings for this hardware
 - optionally downloads `Qwen/Qwen3-ASR-1.7B`
+- if model download succeeds, switches runtime to local-files-only offline mode so `run.sh` does not fetch the model again
 
 Useful options:
 
@@ -59,4 +60,5 @@ List runtime flags:
 
 - Pascal and other pre-Ampere GPUs default to `float16 + eager` mode.
 - Ampere and newer GPUs default to `sdpa`, and prefer `bfloat16`.
+- Blackwell-class GPUs use the `cu128` PyTorch path.
 - CPU-only installs are allowed, but throughput will be much lower.

@@ -49,6 +49,14 @@ class TorchProfile:
 
 TORCH_PROFILES = [
     TorchProfile(
+        name="cu128",
+        torch="2.7.1",
+        torchvision="0.22.1",
+        torchaudio="2.7.1",
+        index_url="https://download.pytorch.org/whl/cu128",
+        min_driver_major=570,
+    ),
+    TorchProfile(
         name="cu124",
         torch="2.6.0",
         torchvision="0.21.0",
@@ -120,9 +128,21 @@ def choose_torch_profile(gpu: GpuInfo | None) -> TorchProfile:
     if gpu is None:
         return next(profile for profile in TORCH_PROFILES if profile.name == "cpu")
 
+    cc_major, _ = gpu.compute_cap
     driver_major = int(gpu.driver_version.split(".", 1)[0])
+    if cc_major >= 12:
+        for profile in TORCH_PROFILES:
+            if profile.name == "cu128" and driver_major >= (profile.min_driver_major or 0):
+                return profile
+        raise SystemExit(
+            f"GPU compute capability {cc_major}.x requires a newer PyTorch CUDA wheel path. "
+            f"Current driver {gpu.driver_version} is too old for the configured cu128 profile."
+        )
+
     for profile in TORCH_PROFILES:
         if profile.min_driver_major is None:
+            continue
+        if profile.name == "cu128":
             continue
         if driver_major >= profile.min_driver_major:
             return profile
@@ -235,6 +255,11 @@ def main() -> None:
     gpu = detect_gpu()
     torch_profile = choose_torch_profile(gpu)
     runtime_env = build_runtime_env(gpu)
+    final_runtime_env = dict(runtime_env)
+    if not args.skip_model_download:
+        final_runtime_env["QWEN_RT_LOCAL_FILES_ONLY"] = "true"
+        final_runtime_env["HF_HUB_OFFLINE"] = "1"
+        final_runtime_env["TRANSFORMERS_OFFLINE"] = "1"
 
     summary = {
         "gpu": None
@@ -246,7 +271,7 @@ def main() -> None:
             "driver_version": gpu.driver_version,
         },
         "torch_profile": torch_profile.name,
-        "runtime_env": runtime_env,
+        "runtime_env": final_runtime_env,
     }
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 
@@ -262,10 +287,12 @@ def main() -> None:
         dry_run=args.dry_run,
     )
     pip_install(BASE_PACKAGES, dry_run=args.dry_run)
-    write_runtime_env(runtime_env, dry_run=args.dry_run)
 
     if not args.skip_model_download:
         maybe_download_model(runtime_env, dry_run=args.dry_run)
+        runtime_env = final_runtime_env
+
+    write_runtime_env(runtime_env, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
