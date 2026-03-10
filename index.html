@@ -97,7 +97,8 @@
       color: var(--muted);
     }
 
-    .field input {
+    .field input,
+    .field select {
       width: 100%;
       border: 1px solid var(--line);
       background: rgba(10, 14, 20, 0.88);
@@ -109,6 +110,16 @@
 
     .field input[type="file"] {
       padding: 10px 12px;
+    }
+
+    .field select {
+      appearance: none;
+    }
+
+    .language-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
     }
 
     .controls {
@@ -268,6 +279,17 @@
         <input id="modelName" value="qwen3-asr-rt">
       </div>
 
+      <div class="language-grid">
+        <div class="field">
+          <label for="primaryLanguage">Primary Language</label>
+          <select id="primaryLanguage"></select>
+        </div>
+        <div class="field">
+          <label for="secondaryLanguage">Secondary Language</label>
+          <select id="secondaryLanguage"></select>
+        </div>
+      </div>
+
       <div class="field">
         <label for="audioFile">Audio File Replay</label>
         <input id="audioFile" type="file" accept="audio/*">
@@ -286,11 +308,12 @@
         <div class="status-row"><span>Recorder</span><strong id="recState">stopped</strong></div>
         <div class="status-row"><span>Source</span><strong id="sourceState">none</strong></div>
         <div class="status-row"><span>Session</span><strong id="sessionId">-</strong></div>
+        <div class="status-row"><span>Language</span><strong id="langState">Korean</strong></div>
         <div class="status-row"><span>Live</span><strong id="liveState">waiting</strong></div>
         <div class="status-row"><span>Playback</span><strong id="playbackState">-</strong></div>
       </div>
 
-      <p class="hint">Use `localhost` in a desktop browser so microphone permissions work without HTTPS. File replay streams the uploaded audio in realtime, and server-side transcription can run directly from the uploaded file.</p>
+      <p class="hint">Use `localhost` in a desktop browser so microphone permissions work without HTTPS. Choose one language or up to two mixed languages before starting. File replay streams the uploaded audio in realtime, and server-side transcription can run directly from the uploaded file.</p>
     </aside>
 
     <main class="card main">
@@ -304,6 +327,8 @@
   <script>
     const wsUrlInput = document.getElementById("wsUrl");
     const modelNameInput = document.getElementById("modelName");
+    const primaryLanguageSelect = document.getElementById("primaryLanguage");
+    const secondaryLanguageSelect = document.getElementById("secondaryLanguage");
     const audioFileInput = document.getElementById("audioFile");
     const playFileBtn = document.getElementById("playFileBtn");
     const transcribeFileBtn = document.getElementById("transcribeFileBtn");
@@ -317,9 +342,42 @@
     const recStateEl = document.getElementById("recState");
     const sourceStateEl = document.getElementById("sourceState");
     const sessionIdEl = document.getElementById("sessionId");
+    const langStateEl = document.getElementById("langState");
     const liveStateEl = document.getElementById("liveState");
     const playbackStateEl = document.getElementById("playbackState");
     const liveBadgeEl = document.getElementById("liveBadge");
+    const FALLBACK_LANGUAGES = [
+      "Chinese",
+      "English",
+      "Cantonese",
+      "Arabic",
+      "German",
+      "French",
+      "Spanish",
+      "Portuguese",
+      "Indonesian",
+      "Italian",
+      "Korean",
+      "Russian",
+      "Thai",
+      "Vietnamese",
+      "Japanese",
+      "Turkish",
+      "Hindi",
+      "Malay",
+      "Dutch",
+      "Swedish",
+      "Danish",
+      "Finnish",
+      "Polish",
+      "Czech",
+      "Filipino",
+      "Persian",
+      "Greek",
+      "Romanian",
+      "Hungarian",
+      "Macedonian",
+    ];
 
     let audioContext = null;
     let mediaStream = null;
@@ -365,6 +423,77 @@
 
     function setPlaybackState(text) {
       playbackStateEl.textContent = text;
+    }
+
+    function selectedLanguages() {
+      const result = [];
+      for (const value of [primaryLanguageSelect.value, secondaryLanguageSelect.value]) {
+        if (!value || result.includes(value)) {
+          continue;
+        }
+        result.push(value);
+      }
+      return result.slice(0, 2);
+    }
+
+    function describeLanguages() {
+      return selectedLanguages().join(" + ") || "auto";
+    }
+
+    function updateLanguageState() {
+      langStateEl.textContent = describeLanguages();
+    }
+
+    function fillLanguageSelect(selectEl, languages, { allowEmpty }) {
+      const currentValue = selectEl.value;
+      const options = [];
+      if (allowEmpty) {
+        options.push('<option value="">None</option>');
+      }
+      for (const language of languages) {
+        const selected = currentValue
+          ? currentValue === language
+          : (!allowEmpty && language === "Korean");
+        options.push(
+          `<option value="${language}"${selected ? " selected" : ""}>${language}</option>`,
+        );
+      }
+      selectEl.innerHTML = options.join("");
+    }
+
+    async function loadLanguages() {
+      fillLanguageSelect(primaryLanguageSelect, FALLBACK_LANGUAGES, { allowEmpty: false });
+      fillLanguageSelect(secondaryLanguageSelect, FALLBACK_LANGUAGES, { allowEmpty: true });
+      primaryLanguageSelect.value = primaryLanguageSelect.value || "Korean";
+      updateLanguageState();
+
+      let languages = FALLBACK_LANGUAGES;
+      try {
+        const response = await fetch("/v1/languages");
+        if (response.ok) {
+          const payload = await response.json();
+          if (payload && Array.isArray(payload.data) && payload.data.length > 0) {
+            languages = payload.data;
+          }
+        }
+      } catch (_) {
+      }
+      fillLanguageSelect(primaryLanguageSelect, languages, { allowEmpty: false });
+      fillLanguageSelect(secondaryLanguageSelect, languages, { allowEmpty: true });
+      if (!primaryLanguageSelect.value) {
+        primaryLanguageSelect.value = "Korean";
+      }
+      updateLanguageState();
+    }
+
+    function normalizeLanguageSelection() {
+      if (
+        secondaryLanguageSelect.value
+        && secondaryLanguageSelect.value === primaryLanguageSelect.value
+      ) {
+        secondaryLanguageSelect.value = "";
+      }
+      updateLanguageState();
     }
 
     function log(message) {
@@ -515,7 +644,12 @@
           if (msg.type === "session.created") {
             sessionReady = true;
             sessionIdEl.textContent = msg.id;
-            ws.send(JSON.stringify({ type: "session.update", model: modelNameInput.value.trim() }));
+            ws.send(JSON.stringify({
+              type: "session.update",
+              model: modelNameInput.value.trim(),
+              languages: selectedLanguages(),
+            }));
+            log(`session languages: ${describeLanguages()}`);
             flushPendingChunks();
             resolve();
             return;
@@ -715,6 +849,13 @@
         const formData = new FormData();
         formData.append("file", file);
         formData.append("model", modelNameInput.value.trim());
+        const languages = selectedLanguages();
+        if (languages[0]) {
+          formData.append("language", languages[0]);
+        }
+        if (languages[1]) {
+          formData.append("secondary_language", languages[1]);
+        }
         formData.append("stream", "true");
         formData.append("response_format", "json");
 
@@ -853,10 +994,13 @@
     playFileBtn.addEventListener("click", startFileReplay);
     transcribeFileBtn.addEventListener("click", startServerFileTranscription);
     stopBtn.addEventListener("click", () => stopStreaming(true));
+    primaryLanguageSelect.addEventListener("change", normalizeLanguageSelection);
+    secondaryLanguageSelect.addEventListener("change", normalizeLanguageSelection);
     clearBtn.addEventListener("click", () => {
       resetTranscript();
       log("transcript cleared");
     });
+    loadLanguages();
 
   </script>
 </body>

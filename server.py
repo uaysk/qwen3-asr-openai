@@ -22,6 +22,12 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, W
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from qwen_asr import Qwen3ASRModel
+from qwen_asr.inference.utils import (
+    SUPPORTED_LANGUAGES,
+    normalize_language_name,
+    split_audio_into_chunks,
+    validate_language,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -45,19 +51,23 @@ SAMPLE_RATE = 16000
 COMMIT_SECONDS = float(os.environ.get("QWEN_RT_COMMIT_SECONDS", "8.0"))
 PARTIAL_MIN_SECONDS = float(os.environ.get("QWEN_RT_PARTIAL_MIN_SECONDS", "2.0"))
 PARTIAL_STEP_SECONDS = float(os.environ.get("QWEN_RT_PARTIAL_STEP_SECONDS", "1.0"))
+OFFLINE_PROGRESSIVE_CHUNK_SECONDS = float(
+    os.environ.get("QWEN_RT_OFFLINE_PROGRESSIVE_CHUNK_SECONDS", "45.0")
+)
+REALTIME_COMMIT_LOOKBACK_SECONDS = float(
+    os.environ.get("QWEN_RT_REALTIME_COMMIT_LOOKBACK_SECONDS", "1.6")
+)
+REALTIME_PARTIAL_LOOKBACK_SECONDS = float(
+    os.environ.get("QWEN_RT_REALTIME_PARTIAL_LOOKBACK_SECONDS", "3.2")
+)
 UPLOAD_DIR = Path(os.environ.get("QWEN_RT_UPLOAD_DIR", str(RUNTIME_ROOT / "uploads")))
 IDLE_UNLOAD_SECONDS = float(os.environ.get("QWEN_RT_IDLE_UNLOAD_SECONDS", "120"))
 IDLE_CHECK_SECONDS = float(os.environ.get("QWEN_RT_IDLE_CHECK_SECONDS", "10"))
 ASR_CONTEXT = os.environ.get(
     "QWEN_RT_ASR_CONTEXT",
     (
-        "Transcribe the speech faithfully and follow these rules strictly. "
-        "Write the output as Korean sentences by default. "
-        "If an English word, acronym, product name, brand name, or technical term is clearly spoken, keep that word itself in original English spelling. "
-        "Except for those English words, keep particles, endings, connectors, and overall sentence structure in Korean. "
-        "Do not output full English sentences. "
-        "Do not output any Chinese characters or Chinese words. "
-        "If uncertain, do not guess Chinese; write conservatively in Korean instead. "
+        "Transcribe the speech faithfully and conservatively. "
+        "Preserve the language that is actually spoken, including code-switching, acronyms, product names, brand names, and technical terms. "
         "Do not translate, summarize, paraphrase, explain, or rewrite the speech. "
         "Only transcribe what is actually spoken."
     ),
@@ -66,6 +76,22 @@ ASR_CONTEXT = os.environ.get(
 COMMIT_SAMPLES = int(COMMIT_SECONDS * SAMPLE_RATE)
 PARTIAL_MIN_SAMPLES = int(PARTIAL_MIN_SECONDS * SAMPLE_RATE)
 PARTIAL_STEP_SAMPLES = int(PARTIAL_STEP_SECONDS * SAMPLE_RATE)
+REALTIME_COMMIT_LOOKBACK_SAMPLES = int(
+    REALTIME_COMMIT_LOOKBACK_SECONDS * SAMPLE_RATE
+)
+REALTIME_PARTIAL_LOOKBACK_SAMPLES = int(
+    REALTIME_PARTIAL_LOOKBACK_SECONDS * SAMPLE_RATE
+)
+MIN_TRANSCRIBE_SAMPLES = 800
+LANGUAGE_NONE_VALUES = {"", "auto", "detect", "none"}
+LANGUAGE_ALIASES = {
+    "ko": "Korean",
+    "korean": "Korean",
+    "한국어": "Korean",
+    "en": "English",
+    "english": "English",
+    "영어": "English",
+}
 
 app = FastAPI()
 app.mount("/assets", StaticFiles(directory=UI_DIR), name="assets")
@@ -100,6 +126,13 @@ class RuntimeConfig:
     attn_implementation: str
     max_inference_batch_size: int
     local_files_only: bool
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptionOptions:
+    languages: tuple[str, ...] = ()
+    context: str = ASR_CONTEXT
+    forced_language: str | None = None
 
 
 def env_flag(name: str, default: bool) -> bool:
@@ -251,6 +284,123 @@ async def idle_unload_loop() -> None:
             )
 
 
+def normalize_audio_waveform(audio: np.ndarray) -> np.ndarray:
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if audio.size == 0:
+        return audio
+    peak = float(np.max(np.abs(audio)))
+    if peak > 1.0:
+        audio = audio / peak
+    return np.clip(audio, -1.0, 1.0).astype(np.float32, copy=False)
+
+
+def _iter_language_values(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        items: list[str] = []
+        for item in value:
+            items.extend(_iter_language_values(item))
+        return items
+    text = str(value).strip()
+    if not text:
+        return []
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return _iter_language_values(parsed)
+    return [part.strip() for part in text.split(",")]
+
+
+def _canonicalize_language(value: str) -> str | None:
+    text = str(value).strip()
+    if not text:
+        return None
+    lowered = text.lower()
+    if lowered in LANGUAGE_NONE_VALUES:
+        return None
+    alias = LANGUAGE_ALIASES.get(lowered, text)
+    lang = normalize_language_name(alias)
+    validate_language(lang)
+    return lang
+
+
+def parse_requested_languages(*raw_values: object) -> tuple[str, ...]:
+    languages: list[str] = []
+    for raw in raw_values:
+        for token in _iter_language_values(raw):
+            lang = _canonicalize_language(token)
+            if lang is None or lang in languages:
+                continue
+            languages.append(lang)
+    if len(languages) > 2:
+        raise ValueError("at most 2 languages are supported")
+    return tuple(languages)
+
+
+def build_transcription_options(
+    languages: tuple[str, ...] | list[str] | None = None,
+) -> TranscriptionOptions:
+    langs = parse_requested_languages(list(languages or ()))
+    parts = [ASR_CONTEXT.strip()]
+    forced_language: str | None = None
+    if len(langs) == 1:
+        forced_language = langs[0]
+        if langs[0] == "Korean":
+            parts.append(
+                "The audio language is Korean. Keep clearly spoken English words, acronyms, product names, brand names, and technical terms in original English spelling."
+            )
+        else:
+            parts.append(
+                f"The audio language is {langs[0]}. Output only {langs[0]} transcription text and do not translate it into any other language."
+            )
+    elif len(langs) == 2:
+        pair = " and ".join(langs)
+        parts.append(
+            f"The audio may contain a mix of {pair}. Transcribe only in the language actually spoken at each moment. Preserve code-switching between {pair} and do not translate one into the other."
+        )
+        if set(langs) == {"Korean", "English"}:
+            parts.append(
+                "When Korean and English are mixed, keep clearly spoken English words in original English spelling."
+            )
+    return TranscriptionOptions(
+        languages=langs,
+        context=" ".join(part for part in parts if part).strip(),
+        forced_language=forced_language,
+    )
+
+
+def build_progressive_audio_chunks(audio: np.ndarray) -> list[np.ndarray]:
+    audio = normalize_audio_waveform(audio)
+    if audio.size < MIN_TRANSCRIBE_SAMPLES:
+        return []
+    parts = split_audio_into_chunks(
+        wav=audio,
+        sr=SAMPLE_RATE,
+        max_chunk_sec=OFFLINE_PROGRESSIVE_CHUNK_SECONDS,
+    )
+    chunks = [chunk.astype(np.float32, copy=False) for chunk, _ in parts if chunk.size >= MIN_TRANSCRIBE_SAMPLES]
+    return chunks or [audio]
+
+
+def transcribe_window(audio: np.ndarray, options: TranscriptionOptions) -> str:
+    audio = normalize_audio_waveform(audio)
+    if audio.size < MIN_TRANSCRIBE_SAMPLES:
+        return ""
+    with _INFER_LOCK:
+        results = get_model().transcribe(
+            (audio, SAMPLE_RATE),
+            context=options.context,
+            language=options.forced_language,
+        )
+    if not results:
+        return ""
+    return (getattr(results[0], "text", "") or "").strip()
+
+
 def merge_speech_chunks(
     speech_chunks: list[dict[str, int]], sr: int = SAMPLE_RATE
 ) -> list[dict[str, int]]:
@@ -340,12 +490,10 @@ def get_speech_timestamps(
     return split_chunks
 
 
-def transcribe_audio(audio: np.ndarray) -> str:
-    clips = build_speech_clips(audio)
-    if not clips:
-        return ""
-    texts = transcribe_clips(clips)
-    return " ".join(texts).strip()
+def transcribe_audio(
+    audio: np.ndarray, options: TranscriptionOptions | None = None
+) -> str:
+    return transcribe_window(audio, options or build_transcription_options())
 
 
 def build_speech_clips(audio: np.ndarray) -> list[tuple[np.ndarray, int]]:
@@ -374,11 +522,19 @@ def build_speech_clips(audio: np.ndarray) -> list[tuple[np.ndarray, int]]:
     return clips
 
 
-def transcribe_clips(clips: list[tuple[np.ndarray, int]]) -> list[str]:
+def transcribe_clips(
+    clips: list[tuple[np.ndarray, int]],
+    options: TranscriptionOptions | None = None,
+) -> list[str]:
     if not clips:
         return []
+    request_options = options or build_transcription_options()
     with _INFER_LOCK:
-        results = get_model().transcribe(clips, context=ASR_CONTEXT)
+        results = get_model().transcribe(
+            clips,
+            context=request_options.context,
+            language=request_options.forced_language,
+        )
 
     texts: list[str] = []
     for result in results:
@@ -422,6 +578,7 @@ class SessionState:
     event_sink: Callable[[dict], Awaitable[None]] | None = None
     session_id: str = field(default_factory=lambda: f"rt-{uuid4()}")
     model_name: str = MODEL_NAME
+    languages: tuple[str, ...] = field(default_factory=tuple)
     audio: np.ndarray = field(default_factory=lambda: np.zeros((0,), dtype=np.float32))
     processed_samples: int = 0
     committed_text: str = ""
@@ -457,6 +614,7 @@ class FileJob:
     job_id: str
     path: Path
     filename: str
+    languages: tuple[str, ...] = field(default_factory=tuple)
     queue: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     text: str = ""
     done: bool = False
@@ -494,10 +652,7 @@ def decode_audio_mono_16k(audio_file: Path) -> np.ndarray:
     if not chunks:
         raise ValueError("Failed to decode audio.")
     audio = np.concatenate(chunks).reshape(-1)
-    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
-    if peak > 0.0:
-        audio = audio / peak
-    return audio.astype(np.float32, copy=False)
+    return normalize_audio_waveform(audio)
 
 
 def decode_audio_bytes_mono_16k(data: bytes) -> np.ndarray:
@@ -518,10 +673,7 @@ def decode_audio_bytes_mono_16k(data: bytes) -> np.ndarray:
     if not chunks:
         raise ValueError("Failed to decode audio.")
     audio = np.concatenate(chunks).reshape(-1)
-    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
-    if peak > 0.0:
-        audio = audio / peak
-    return audio.astype(np.float32, copy=False)
+    return normalize_audio_waveform(audio)
 
 
 def build_transcription_response(
@@ -537,7 +689,7 @@ def build_transcription_response(
         return JSONResponse(
             {
                 "task": "transcribe",
-                "language": language or "ko",
+                "language": language,
                 "duration": duration_s,
                 "text": text,
                 "segments": [],
@@ -559,7 +711,9 @@ async def emit_job_event(job: FileJob, payload: dict) -> None:
 async def run_file_job(job: FileJob) -> None:
     try:
         audio = await asyncio.to_thread(decode_audio_mono_16k, job.path)
-        job.total_segments = max(1, int(np.ceil(audio.size / COMMIT_SAMPLES)))
+        options = build_transcription_options(job.languages)
+        chunks = build_progressive_audio_chunks(audio)
+        job.total_segments = max(1, len(chunks))
         await emit_job_event(
             job,
             {
@@ -570,33 +724,28 @@ async def run_file_job(job: FileJob) -> None:
                 "text": "",
             },
         )
-        async def sink(payload: dict) -> None:
-            payload = dict(payload)
-            payload["job_id"] = job.job_id
-            if payload.get("type") == "transcription.partial":
-                job.text = payload.get("text", "")
-                payload["completed_segments"] = job.completed_segments
-                payload["total_segments"] = job.total_segments
-            elif payload.get("type") == "transcription.done":
-                job.text = payload.get("text", "")
-            await emit_job_event(job, payload)
-
-        state = SessionState(event_sink=sink)
-        state.generation_task = asyncio.create_task(generation_loop(state))
-
-        feed_chunk_samples = 3200
-        total_samples = int(audio.size)
-        cursor = 0
-        while cursor < total_samples:
+        total_samples = max(int(audio.size), 1)
+        consumed_samples = 0
+        for idx, chunk in enumerate(chunks, start=1):
             if job.cancel_requested:
                 raise RuntimeError("cancelled")
-            next_cursor = min(total_samples, cursor + feed_chunk_samples)
-            state.audio = np.concatenate((state.audio, audio[cursor:next_cursor]), axis=0)
-            cursor = next_cursor
-            state.decode_event.set()
+            segment_text = await maybe_transcribe(chunk, options)
+            if segment_text:
+                job.text = append_without_overlap(job.text, segment_text)
+                await emit_job_event(
+                    job,
+                    {
+                        "type": "transcription.partial",
+                        "job_id": job.job_id,
+                        "text": job.text,
+                        "completed_segments": idx,
+                        "total_segments": job.total_segments,
+                    },
+                )
+            consumed_samples = min(total_samples, consumed_samples + int(chunk.size))
             job.completed_segments = min(
                 job.total_segments,
-                max(job.completed_segments, int(np.ceil(cursor / COMMIT_SAMPLES))),
+                max(job.completed_segments, idx),
             )
             await emit_job_event(
                 job,
@@ -606,16 +755,25 @@ async def run_file_job(job: FileJob) -> None:
                     "completed_segments": job.completed_segments,
                     "total_segments": job.total_segments,
                     "text": job.text,
-                    "audio_progress": round(cursor / max(total_samples, 1), 4),
+                    "audio_progress": round(consumed_samples / total_samples, 4),
                 },
             )
             await asyncio.sleep(0)
 
-        state.final_requested = True
-        state.decode_event.set()
-        await state.generation_task
-        job.text = state.visible_text
         job.done = True
+        await emit_job_event(
+            job,
+            {
+                "type": "transcription.done",
+                "job_id": job.job_id,
+                "text": job.text,
+                "usage": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": len(job.text),
+                    "total_tokens": len(job.text),
+                },
+            },
+        )
         await emit_job_event(
             job,
             {
@@ -643,24 +801,30 @@ async def run_file_job(job: FileJob) -> None:
         await job.queue.put("event: close\ndata: {}\n\n")
 
 
-async def maybe_transcribe(audio: np.ndarray) -> str:
+def slice_with_lookback(
+    audio: np.ndarray, start: int, end: int, lookback_samples: int
+) -> np.ndarray:
+    return audio[max(0, start - lookback_samples) : end]
+
+
+async def maybe_transcribe(
+    audio: np.ndarray, options: TranscriptionOptions | None = None
+) -> str:
     if audio.size == 0:
         return ""
-    return await asyncio.to_thread(_transcribe_with_activity, audio.copy())
+    return await asyncio.to_thread(
+        _transcribe_with_activity,
+        audio.copy(),
+        options or build_transcription_options(),
+    )
 
 
-def _transcribe_with_activity(audio: np.ndarray) -> str:
+def _transcribe_with_activity(
+    audio: np.ndarray, options: TranscriptionOptions
+) -> str:
     inference_started()
     try:
-        return transcribe_audio(audio)
-    finally:
-        inference_finished()
-
-
-def _transcribe_clips_with_activity(clips: list[tuple[np.ndarray, int]]) -> list[str]:
-    inference_started()
-    try:
-        return transcribe_clips(clips)
+        return transcribe_audio(audio, options)
     finally:
         inference_finished()
 
@@ -668,6 +832,7 @@ def _transcribe_clips_with_activity(clips: list[tuple[np.ndarray, int]]) -> list
 async def generation_loop(state: SessionState) -> None:
     try:
         while not state.closed:
+            options = build_transcription_options(state.languages)
             await state.decode_event.wait()
             state.decode_event.clear()
 
@@ -676,10 +841,14 @@ async def generation_loop(state: SessionState) -> None:
                 if available < COMMIT_SAMPLES:
                     break
 
-                segment = state.audio[
-                    state.processed_samples : state.processed_samples + COMMIT_SAMPLES
-                ]
-                segment_text = await maybe_transcribe(segment)
+                segment_end = state.processed_samples + COMMIT_SAMPLES
+                segment = slice_with_lookback(
+                    state.audio,
+                    state.processed_samples,
+                    segment_end,
+                    REALTIME_COMMIT_LOOKBACK_SAMPLES,
+                )
+                segment_text = await maybe_transcribe(segment, options)
                 if segment_text:
                     state.committed_text = append_without_overlap(
                         state.committed_text, segment_text
@@ -697,15 +866,25 @@ async def generation_loop(state: SessionState) -> None:
                 )
             )
             if should_emit_partial:
-                partial_audio = state.audio[state.processed_samples :]
-                partial_text = await maybe_transcribe(partial_audio)
+                partial_audio = slice_with_lookback(
+                    state.audio,
+                    state.processed_samples,
+                    state.audio.size,
+                    REALTIME_PARTIAL_LOOKBACK_SAMPLES,
+                )
+                partial_text = await maybe_transcribe(partial_audio, options)
                 visible = append_without_overlap(state.committed_text, partial_text)
                 await state.send_visible_text(visible)
                 state.last_partial_audio_samples = state.audio.size
 
             if state.final_requested:
-                tail_audio = state.audio[state.processed_samples :]
-                tail_text = await maybe_transcribe(tail_audio)
+                tail_audio = slice_with_lookback(
+                    state.audio,
+                    state.processed_samples,
+                    state.audio.size,
+                    REALTIME_PARTIAL_LOOKBACK_SAMPLES,
+                )
+                tail_text = await maybe_transcribe(tail_audio, options)
                 final_text = append_without_overlap(state.committed_text, tail_text)
                 await state.send_visible_text(final_text)
                 await state.send_json(
@@ -767,11 +946,17 @@ async def models() -> JSONResponse:
     )
 
 
+@app.get("/v1/languages")
+async def languages() -> JSONResponse:
+    return JSONResponse({"data": SUPPORTED_LANGUAGES})
+
+
 @app.post("/v1/audio/transcriptions", response_model=None)
 async def create_audio_transcription(
     file: UploadFile = File(...),
     model: str = Form(default=MODEL_NAME),
     language: str | None = Form(default=None),
+    secondary_language: str | None = Form(default=None),
     prompt: str | None = Form(default=None),
     response_format: str = Form(default="json"),
     stream: str | None = Form(default=None),
@@ -788,29 +973,34 @@ async def create_audio_transcription(
     audio = await asyncio.to_thread(decode_audio_bytes_mono_16k, data)
     duration_s = round(audio.size / SAMPLE_RATE, 3)
     stream_enabled = str(stream).lower() == "true" if stream is not None else False
+    try:
+        options = build_transcription_options(
+            parse_requested_languages(language, secondary_language)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not stream_enabled:
-        text = await maybe_transcribe(audio)
+        text = await maybe_transcribe(audio, options)
         return build_transcription_response(
             text=text,
             response_format=response_format,
-            language=language or "ko",
+            language=",".join(options.languages) or None,
             duration_s=duration_s,
         )
 
     async def event_iter():
-        clips = build_speech_clips(audio)
-        if not clips:
+        chunks = build_progressive_audio_chunks(audio)
+        if not chunks:
             payload = {"type": "transcription.done", "text": "", "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
             return
 
         committed_text = ""
-        total = len(clips)
-        for idx, clip in enumerate(clips, start=1):
-            texts = await asyncio.to_thread(_transcribe_clips_with_activity, [clip])
-            segment_text = texts[0] if texts else ""
+        total = len(chunks)
+        for idx, chunk in enumerate(chunks, start=1):
+            segment_text = await maybe_transcribe(chunk, options)
             if segment_text:
                 committed_text = append_without_overlap(committed_text, segment_text)
                 partial_payload = {
@@ -849,15 +1039,28 @@ async def create_audio_translation() -> JSONResponse:
 
 
 @app.post("/v1/file-transcriptions")
-async def create_file_transcription(file: UploadFile = File(...)) -> JSONResponse:
+async def create_file_transcription(
+    file: UploadFile = File(...),
+    language: str | None = Form(default=None),
+    secondary_language: str | None = Form(default=None),
+) -> JSONResponse:
     suffix = Path(file.filename or "upload.bin").suffix or ".bin"
     job_id = f"file-{uuid4()}"
     path = UPLOAD_DIR / f"{job_id}{suffix}"
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="empty file")
+    try:
+        languages = parse_requested_languages(language, secondary_language)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     path.write_bytes(data)
-    job = FileJob(job_id=job_id, path=path, filename=file.filename or path.name)
+    job = FileJob(
+        job_id=job_id,
+        path=path,
+        filename=file.filename or path.name,
+        languages=languages,
+    )
     set_job(job)
     asyncio.create_task(run_file_job(job))
     return JSONResponse(
@@ -913,6 +1116,20 @@ async def realtime_endpoint(websocket: WebSocket) -> None:
             msg_type = message.get("type")
             if msg_type == "session.update":
                 state.model_name = message.get("model") or MODEL_NAME
+                try:
+                    state.languages = parse_requested_languages(
+                        message.get("languages"),
+                        message.get("language"),
+                        message.get("secondary_language"),
+                    )
+                except ValueError as exc:
+                    await state.send_json(
+                        {
+                            "type": "error",
+                            "error": str(exc),
+                            "code": "invalid_language",
+                        }
+                    )
                 continue
 
             if msg_type == "input_audio_buffer.append":
