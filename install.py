@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / ".venv"
 VENV_PYTHON = VENV_DIR / "bin" / "python"
 MODEL_ID = os.environ.get("QWEN_RT_MODEL_ID", "Qwen/Qwen3-ASR-1.7B")
+ALIGNER_ID = os.environ.get("QWEN_RT_ALIGNER_ID", "Qwen/Qwen3-ForcedAligner-0.6B")
 
 BASE_PACKAGES = [
     "numpy==2.4.2",
@@ -178,6 +179,7 @@ def build_runtime_env(gpu: GpuInfo | None) -> dict[str, str]:
         "TRANSFORMERS_CACHE": str(ROOT / ".cache" / "hf" / "transformers"),
         "XDG_CACHE_HOME": str(ROOT / ".cache" / "xdg"),
         "QWEN_RT_MODEL_ID": MODEL_ID,
+        "QWEN_RT_ALIGNER_ID": ALIGNER_ID,
         "QWEN_RT_MODEL_NAME": "qwen3-asr-rt",
         "QWEN_RT_LOCAL_FILES_ONLY": "false",
     }
@@ -253,19 +255,56 @@ def pip_install(packages: list[str], index_url: str | None = None, dry_run: bool
 
 
 def maybe_download_model(runtime_env: dict[str, str], dry_run: bool = False) -> None:
+    maybe_download_repo(MODEL_ID, runtime_env, dry_run=dry_run)
+
+
+def maybe_download_aligner(runtime_env: dict[str, str], dry_run: bool = False) -> None:
+    maybe_download_repo(ALIGNER_ID, runtime_env, dry_run=dry_run)
+
+
+def maybe_download_repo(
+    repo_id: str,
+    runtime_env: dict[str, str],
+    dry_run: bool = False,
+) -> None:
     code = (
         "from huggingface_hub import snapshot_download; "
-        f"snapshot_download(repo_id={MODEL_ID!r}, cache_dir={str(ROOT / '.cache' / 'hf')!r})"
+        f"snapshot_download(repo_id={repo_id!r}, cache_dir={str(ROOT / '.cache' / 'hf')!r})"
     )
     env = os.environ.copy()
     env.update(runtime_env)
     run([str(VENV_PYTHON), "-c", code], env=env, dry_run=dry_run)
 
 
+def build_final_runtime_env(base_env: dict[str, str]) -> dict[str, str]:
+    env = dict(base_env)
+    cached_model_snapshot = resolve_snapshot_dir(MODEL_ID)
+    cached_aligner_snapshot = resolve_snapshot_dir(ALIGNER_ID)
+
+    if cached_model_snapshot is not None:
+        env["QWEN_RT_MODEL_PATH"] = str(cached_model_snapshot)
+        env["QWEN_RT_LOCAL_FILES_ONLY"] = "true"
+        env["HF_HUB_OFFLINE"] = "1"
+        env["TRANSFORMERS_OFFLINE"] = "1"
+    else:
+        env.pop("QWEN_RT_MODEL_PATH", None)
+        env["QWEN_RT_LOCAL_FILES_ONLY"] = "false"
+        env.pop("HF_HUB_OFFLINE", None)
+        env.pop("TRANSFORMERS_OFFLINE", None)
+
+    if cached_aligner_snapshot is not None:
+        env["QWEN_RT_ALIGNER_PATH"] = str(cached_aligner_snapshot)
+    else:
+        env.pop("QWEN_RT_ALIGNER_PATH", None)
+
+    return env
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-model-download", action="store_true")
+    parser.add_argument("--skip-aligner-download", action="store_true")
     return parser.parse_args()
 
 
@@ -274,17 +313,7 @@ def main() -> None:
     gpu = detect_gpu()
     torch_profile = choose_torch_profile(gpu)
     runtime_env = build_runtime_env(gpu)
-    final_runtime_env = dict(runtime_env)
-    cached_snapshot = resolve_snapshot_dir(MODEL_ID)
-    if cached_snapshot is not None:
-        final_runtime_env["QWEN_RT_MODEL_PATH"] = str(cached_snapshot)
-        final_runtime_env["QWEN_RT_LOCAL_FILES_ONLY"] = "true"
-        final_runtime_env["HF_HUB_OFFLINE"] = "1"
-        final_runtime_env["TRANSFORMERS_OFFLINE"] = "1"
-    elif not args.skip_model_download:
-        final_runtime_env["QWEN_RT_LOCAL_FILES_ONLY"] = "true"
-        final_runtime_env["HF_HUB_OFFLINE"] = "1"
-        final_runtime_env["TRANSFORMERS_OFFLINE"] = "1"
+    final_runtime_env = build_final_runtime_env(runtime_env)
 
     summary = {
         "gpu": None
@@ -296,6 +325,8 @@ def main() -> None:
             "driver_version": gpu.driver_version,
         },
         "torch_profile": torch_profile.name,
+        "model_id": MODEL_ID,
+        "aligner_id": ALIGNER_ID,
         "runtime_env": final_runtime_env,
     }
     print(json.dumps(summary, indent=2, ensure_ascii=False))
@@ -315,14 +346,10 @@ def main() -> None:
 
     if not args.skip_model_download:
         maybe_download_model(runtime_env, dry_run=args.dry_run)
-        cached_snapshot = resolve_snapshot_dir(MODEL_ID)
-        if cached_snapshot is not None:
-            final_runtime_env["QWEN_RT_MODEL_PATH"] = str(cached_snapshot)
-        runtime_env = final_runtime_env
-    elif cached_snapshot is not None:
-        runtime_env = final_runtime_env
+    if not args.skip_aligner_download:
+        maybe_download_aligner(runtime_env, dry_run=args.dry_run)
 
-    write_runtime_env(runtime_env, dry_run=args.dry_run)
+    write_runtime_env(build_final_runtime_env(runtime_env), dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

@@ -47,6 +47,9 @@ os.environ.setdefault("XDG_CACHE_HOME", str(CACHE_ROOT / "xdg"))
 MODEL_NAME = os.environ.get("QWEN_RT_MODEL_NAME", "qwen3-asr-rt")
 MODEL_ID = os.environ.get("QWEN_RT_MODEL_ID", "Qwen/Qwen3-ASR-1.7B")
 MODEL_PATH = os.environ.get("QWEN_RT_MODEL_PATH")
+DEFAULT_ALIGNER_ID = "Qwen/Qwen3-ForcedAligner-0.6B"
+ALIGNER_ID = os.environ.get("QWEN_RT_ALIGNER_ID")
+ALIGNER_PATH = os.environ.get("QWEN_RT_ALIGNER_PATH")
 SAMPLE_RATE = 16000
 COMMIT_SECONDS = float(os.environ.get("QWEN_RT_COMMIT_SECONDS", "8.0"))
 PARTIAL_MIN_SECONDS = float(os.environ.get("QWEN_RT_PARTIAL_MIN_SECONDS", "2.0"))
@@ -92,12 +95,16 @@ LANGUAGE_ALIASES = {
     "english": "English",
     "영어": "English",
 }
+SENTENCE_END_MARKERS = (".", "!", "?", "。", "！", "？")
+CLOSING_PUNCTUATION = set(".,!?;:)]}、。，！？；：」』）》〉】")
+OPENING_PUNCTUATION = set("([{'\"“‘「『《〈【")
 
 app = FastAPI()
 app.mount("/assets", StaticFiles(directory=UI_DIR), name="assets")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 _MODEL: Qwen3ASRModel | None = None
+_TIMESTAMP_MODEL: Qwen3ASRModel | None = None
 _MODEL_LOCK = threading.Lock()
 _INFER_LOCK = threading.Lock()
 _STATE_LOCK = threading.Lock()
@@ -135,6 +142,14 @@ class TranscriptionOptions:
     forced_language: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class TranscriptionResult:
+    text: str = ""
+    language: str | None = None
+    words: tuple[dict[str, str | float], ...] = ()
+    segments: tuple[dict[str, str | float], ...] = ()
+
+
 def env_flag(name: str, default: bool) -> bool:
     value = os.environ.get(name)
     if value is None:
@@ -142,12 +157,12 @@ def env_flag(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def resolve_cached_model_path() -> str | None:
-    if MODEL_PATH and Path(MODEL_PATH).exists():
-        return MODEL_PATH
+def resolve_cached_repo_path(repo_id: str, explicit_path: str | None = None) -> str | None:
+    if explicit_path and Path(explicit_path).exists():
+        return explicit_path
 
     hf_home = Path(os.environ.get("HF_HOME", str(CACHE_ROOT / "hf")))
-    model_key = f"models--{MODEL_ID.replace('/', '--')}"
+    model_key = f"models--{repo_id.replace('/', '--')}"
     candidate_roots = [
         hf_home / model_key,
         hf_home / "hub" / model_key,
@@ -160,6 +175,20 @@ def resolve_cached_model_path() -> str | None:
         if snapshots:
             return str(snapshots[-1])
     return None
+
+
+def resolve_cached_model_path() -> str | None:
+    return resolve_cached_repo_path(MODEL_ID, MODEL_PATH)
+
+
+def resolve_forced_aligner_path(local_files_only: bool) -> str | None:
+    if ALIGNER_ID:
+        return resolve_cached_repo_path(ALIGNER_ID, ALIGNER_PATH) or (
+            None if local_files_only else ALIGNER_ID
+        )
+    if ALIGNER_PATH:
+        return resolve_cached_repo_path(DEFAULT_ALIGNER_ID, ALIGNER_PATH)
+    return resolve_cached_repo_path(DEFAULT_ALIGNER_ID)
 
 
 @lru_cache(maxsize=1)
@@ -226,6 +255,40 @@ def get_model() -> Qwen3ASRModel:
     return _MODEL
 
 
+def get_timestamp_model() -> Qwen3ASRModel:
+    global _TIMESTAMP_MODEL
+    if _TIMESTAMP_MODEL is not None:
+        return _TIMESTAMP_MODEL
+    with _MODEL_LOCK:
+        if _TIMESTAMP_MODEL is None:
+            runtime = select_runtime_config()
+            model_source = resolve_cached_model_path() or MODEL_ID
+            aligner_source = resolve_forced_aligner_path(runtime.local_files_only)
+            if aligner_source is None:
+                raise ValueError(
+                    "timestamps require a forced aligner. "
+                    "Set QWEN_RT_ALIGNER_ID or QWEN_RT_ALIGNER_PATH, "
+                    "or cache Qwen/Qwen3-ForcedAligner-0.6B locally."
+                )
+            _TIMESTAMP_MODEL = Qwen3ASRModel.from_pretrained(
+                model_source,
+                forced_aligner=aligner_source,
+                forced_aligner_kwargs={
+                    "device_map": runtime.device_map,
+                    "dtype": runtime.dtype,
+                    "local_files_only": runtime.local_files_only,
+                },
+                device_map=runtime.device_map,
+                dtype=runtime.dtype,
+                attn_implementation=runtime.attn_implementation,
+                max_inference_batch_size=runtime.max_inference_batch_size,
+                max_new_tokens=512,
+                local_files_only=runtime.local_files_only,
+            )
+            touch_activity()
+    return _TIMESTAMP_MODEL
+
+
 def touch_activity() -> None:
     global _LAST_ACTIVITY_TS
     with _STATE_LOCK:
@@ -247,11 +310,11 @@ def inference_finished() -> None:
 
 
 def unload_model_if_idle() -> bool:
-    global _MODEL
+    global _MODEL, _TIMESTAMP_MODEL
     with _STATE_LOCK:
         idle_for = time.monotonic() - _LAST_ACTIVITY_TS
         should_unload = (
-            _MODEL is not None
+            (_MODEL is not None or _TIMESTAMP_MODEL is not None)
             and _ACTIVE_INFERENCES == 0
             and idle_for >= IDLE_UNLOAD_SECONDS
         )
@@ -260,12 +323,14 @@ def unload_model_if_idle() -> bool:
 
     with _MODEL_LOCK:
         if _MODEL is None:
-            return False
+            if _TIMESTAMP_MODEL is None:
+                return False
         with _STATE_LOCK:
             idle_for = time.monotonic() - _LAST_ACTIVITY_TS
             if _ACTIVE_INFERENCES != 0 or idle_for < IDLE_UNLOAD_SECONDS:
                 return False
         _MODEL = None
+        _TIMESTAMP_MODEL = None
 
     gc.collect()
     if torch.cuda.is_available():
@@ -387,18 +452,135 @@ def build_progressive_audio_chunks(audio: np.ndarray) -> list[np.ndarray]:
 
 
 def transcribe_window(audio: np.ndarray, options: TranscriptionOptions) -> str:
+    return transcribe_result(audio, options).text
+
+
+def _contains_cjk_no_space_char(value: str) -> bool:
+    for ch in value:
+        code = ord(ch)
+        if (
+            0x3400 <= code <= 0x4DBF
+            or 0x4E00 <= code <= 0x9FFF
+            or 0x3040 <= code <= 0x30FF
+            or 0xF900 <= code <= 0xFAFF
+        ):
+            return True
+    return False
+
+
+def _join_aligned_tokens(tokens: list[str]) -> str:
+    text = ""
+    for token in tokens:
+        piece = token.strip()
+        if not piece:
+            continue
+        if not text:
+            text = piece
+            continue
+        prev_char = text[-1]
+        next_char = piece[0]
+        if (
+            next_char in CLOSING_PUNCTUATION
+            or prev_char in OPENING_PUNCTUATION
+            or (
+                _contains_cjk_no_space_char(prev_char)
+                and _contains_cjk_no_space_char(next_char)
+            )
+        ):
+            text += piece
+            continue
+        text += f" {piece}"
+    return text.strip()
+
+
+def _serialize_word_timestamps(time_stamps: object) -> tuple[dict[str, str | float], ...]:
+    items = getattr(time_stamps, "items", None)
+    if items is None:
+        return ()
+
+    words: list[dict[str, str | float]] = []
+    for item in items:
+        text = str(getattr(item, "text", "") or "").strip()
+        start = round(float(getattr(item, "start_time", 0.0) or 0.0), 3)
+        end = round(float(getattr(item, "end_time", 0.0) or 0.0), 3)
+        if not text and end <= start:
+            continue
+        words.append({"text": text, "start": start, "end": end})
+    return tuple(words)
+
+
+def _build_sentence_segments(
+    words: tuple[dict[str, str | float], ...],
+) -> tuple[dict[str, str | float], ...]:
+    if not words:
+        return ()
+
+    segments: list[dict[str, str | float]] = []
+    current: list[dict[str, str | float]] = []
+
+    def flush() -> None:
+        if not current:
+            return
+        text = _join_aligned_tokens(
+            [str(item.get("text", "") or "") for item in current]
+        )
+        if not text:
+            current.clear()
+            return
+        segments.append(
+            {
+                "start": round(float(current[0]["start"]), 3),
+                "end": round(float(current[-1]["end"]), 3),
+                "text": text,
+            }
+        )
+        current.clear()
+
+    for word in words:
+        token = str(word.get("text", "") or "")
+        if current:
+            gap = float(word["start"]) - float(current[-1]["end"])
+            span = float(word["end"]) - float(current[0]["start"])
+            if gap >= 1.0 or span >= 12.0:
+                flush()
+        current.append(word)
+        if token.endswith(SENTENCE_END_MARKERS):
+            flush()
+
+    flush()
+    return tuple(segments)
+
+
+def transcribe_result(
+    audio: np.ndarray,
+    options: TranscriptionOptions,
+    return_timestamps: bool = False,
+) -> TranscriptionResult:
     audio = normalize_audio_waveform(audio)
     if audio.size < MIN_TRANSCRIBE_SAMPLES:
-        return ""
+        return TranscriptionResult()
     with _INFER_LOCK:
-        results = get_model().transcribe(
+        model = get_timestamp_model() if return_timestamps else get_model()
+        results = model.transcribe(
             (audio, SAMPLE_RATE),
             context=options.context,
             language=options.forced_language,
+            return_time_stamps=return_timestamps,
         )
     if not results:
-        return ""
-    return (getattr(results[0], "text", "") or "").strip()
+        return TranscriptionResult()
+    result = results[0]
+    words = ()
+    segments = ()
+    if return_timestamps:
+        words = _serialize_word_timestamps(getattr(result, "time_stamps", None))
+        segments = _build_sentence_segments(words)
+    return TranscriptionResult(
+        text=(getattr(result, "text", "") or "").strip(),
+        language=(getattr(result, "language", "") or "").strip() or None,
+        words=words,
+        segments=segments,
+    )
 
 
 def merge_speech_chunks(
@@ -494,6 +676,18 @@ def transcribe_audio(
     audio: np.ndarray, options: TranscriptionOptions | None = None
 ) -> str:
     return transcribe_window(audio, options or build_transcription_options())
+
+
+def transcribe_audio_result(
+    audio: np.ndarray,
+    options: TranscriptionOptions | None = None,
+    return_timestamps: bool = False,
+) -> TranscriptionResult:
+    return transcribe_result(
+        audio,
+        options or build_transcription_options(),
+        return_timestamps=return_timestamps,
+    )
 
 
 def build_speech_clips(audio: np.ndarray) -> list[tuple[np.ndarray, int]]:
@@ -622,6 +816,7 @@ class FileJob:
     cancel_requested: bool = False
     total_segments: int = 0
     completed_segments: int = 0
+    timestamps: bool = False
 
 
 def set_job(job: FileJob) -> None:
@@ -678,29 +873,39 @@ def decode_audio_bytes_mono_16k(data: bytes) -> np.ndarray:
 
 def build_transcription_response(
     *,
-    text: str,
+    result: TranscriptionResult,
     response_format: str,
     language: str | None = None,
     duration_s: float | None = None,
 ) -> JSONResponse | PlainTextResponse:
+    text = result.text
+    resolved_language = result.language or language
+    words = list(result.words)
+    segments = list(result.segments)
     if response_format == "text":
         return PlainTextResponse(text)
     if response_format == "verbose_json":
-        return JSONResponse(
-            {
-                "task": "transcribe",
-                "language": language,
-                "duration": duration_s,
-                "text": text,
-                "segments": [],
-            }
-        )
+        payload = {
+            "task": "transcribe",
+            "language": resolved_language,
+            "duration": duration_s,
+            "text": text,
+            "segments": segments,
+        }
+        if words:
+            payload["words"] = words
+        return JSONResponse(payload)
     if response_format in {"json", None}:
-        return JSONResponse(
-            {
-                "text": text,
-            }
-        )
+        payload: dict[str, object] = {"text": text}
+        if segments:
+            payload["segments"] = segments
+        if words:
+            payload["words"] = words
+        if (segments or words) and resolved_language is not None:
+            payload["language"] = resolved_language
+        if (segments or words) and duration_s is not None:
+            payload["duration"] = duration_s
+        return JSONResponse(payload)
     raise HTTPException(status_code=400, detail=f"unsupported response_format: {response_format}")
 
 
@@ -713,6 +918,7 @@ async def run_file_job(job: FileJob) -> None:
         audio = await asyncio.to_thread(decode_audio_mono_16k, job.path)
         options = build_transcription_options(job.languages)
         chunks = build_progressive_audio_chunks(audio)
+        final_result = TranscriptionResult()
         job.total_segments = max(1, len(chunks))
         await emit_job_event(
             job,
@@ -760,20 +966,33 @@ async def run_file_job(job: FileJob) -> None:
             )
             await asyncio.sleep(0)
 
+        final_result = TranscriptionResult(text=job.text)
+        if job.timestamps:
+            final_result = await maybe_transcribe_result(
+                audio,
+                options,
+                return_timestamps=True,
+            )
+            job.text = final_result.text
+
         job.done = True
-        await emit_job_event(
-            job,
-            {
-                "type": "transcription.done",
-                "job_id": job.job_id,
-                "text": job.text,
-                "usage": {
-                    "prompt_tokens": 0,
-                    "completion_tokens": len(job.text),
-                    "total_tokens": len(job.text),
-                },
+        done_payload: dict[str, object] = {
+            "type": "transcription.done",
+            "job_id": job.job_id,
+            "text": job.text,
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": len(job.text),
+                "total_tokens": len(job.text),
             },
-        )
+        }
+        if final_result.segments:
+            done_payload["segments"] = list(final_result.segments)
+        if final_result.words:
+            done_payload["words"] = list(final_result.words)
+        if final_result.language:
+            done_payload["language"] = final_result.language
+        await emit_job_event(job, done_payload)
         await emit_job_event(
             job,
             {
@@ -810,21 +1029,47 @@ def slice_with_lookback(
 async def maybe_transcribe(
     audio: np.ndarray, options: TranscriptionOptions | None = None
 ) -> str:
+    return (
+        await maybe_transcribe_result(
+            audio,
+            options or build_transcription_options(),
+        )
+    ).text
+
+
+async def maybe_transcribe_result(
+    audio: np.ndarray,
+    options: TranscriptionOptions | None = None,
+    return_timestamps: bool = False,
+) -> TranscriptionResult:
     if audio.size == 0:
-        return ""
+        return TranscriptionResult()
     return await asyncio.to_thread(
-        _transcribe_with_activity,
+        _transcribe_result_with_activity,
         audio.copy(),
         options or build_transcription_options(),
+        return_timestamps,
     )
 
 
 def _transcribe_with_activity(
     audio: np.ndarray, options: TranscriptionOptions
 ) -> str:
+    return _transcribe_result_with_activity(audio, options).text
+
+
+def _transcribe_result_with_activity(
+    audio: np.ndarray,
+    options: TranscriptionOptions,
+    return_timestamps: bool = False,
+) -> TranscriptionResult:
     inference_started()
     try:
-        return transcribe_audio(audio, options)
+        return transcribe_audio_result(
+            audio,
+            options,
+            return_timestamps=return_timestamps,
+        )
     finally:
         inference_finished()
 
@@ -961,6 +1206,7 @@ async def create_audio_transcription(
     response_format: str = Form(default="json"),
     stream: str | None = Form(default=None),
     temperature: float | None = Form(default=None),
+    timestamps: bool = Form(default=False),
 ):
     del prompt, temperature
     if model != MODEL_NAME:
@@ -980,10 +1226,30 @@ async def create_audio_transcription(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    if stream_enabled and timestamps:
+        raise HTTPException(
+            status_code=400,
+            detail="timestamps are not supported when stream=true",
+        )
+
     if not stream_enabled:
-        text = await maybe_transcribe(audio, options)
+        try:
+            result = await maybe_transcribe_result(
+                audio,
+                options,
+                return_timestamps=timestamps,
+            )
+        except ValueError as exc:
+            detail = str(exc)
+            if "forced_aligner" in detail:
+                detail = (
+                    "timestamps require a forced aligner. "
+                    "Set QWEN_RT_ALIGNER_ID or QWEN_RT_ALIGNER_PATH, "
+                    "or cache Qwen/Qwen3-ForcedAligner-0.6B locally."
+                )
+            raise HTTPException(status_code=400, detail=detail) from exc
         return build_transcription_response(
-            text=text,
+            result=result,
             response_format=response_format,
             language=",".join(options.languages) or None,
             duration_s=duration_s,
@@ -1043,6 +1309,7 @@ async def create_file_transcription(
     file: UploadFile = File(...),
     language: str | None = Form(default=None),
     secondary_language: str | None = Form(default=None),
+    timestamps: bool = Form(default=False),
 ) -> JSONResponse:
     suffix = Path(file.filename or "upload.bin").suffix or ".bin"
     job_id = f"file-{uuid4()}"
@@ -1060,6 +1327,7 @@ async def create_file_transcription(
         path=path,
         filename=file.filename or path.name,
         languages=languages,
+        timestamps=timestamps,
     )
     set_job(job)
     asyncio.create_task(run_file_job(job))
