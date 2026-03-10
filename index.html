@@ -264,60 +264,69 @@
   <div class="shell">
     <aside class="card sidebar">
       <div class="brand">
-        <span class="eyebrow">Realtime ASR</span>
-        <h1>Qwen 1.7B Realtime ASR</h1>
-        <p class="subtitle">Microphone PCM streaming into a direct Qwen3ASRModel backend on this host. The UI now uses a dark theme and keeps the transcript view focused on the text stream.</p>
+        <span class="eyebrow" data-i18n="brand.eyebrow">Realtime ASR</span>
+        <h1 data-i18n="brand.title">Qwen 1.7B Realtime ASR</h1>
+        <p class="subtitle" data-i18n="brand.subtitle">Microphone PCM streaming into a direct Qwen3ASRModel backend on this host. The UI now uses a dark theme and keeps the transcript view focused on the text stream.</p>
       </div>
 
       <div class="field">
-        <label for="wsUrl">WebSocket URL</label>
+        <label for="uiLanguage" data-i18n="field.uiLanguage">UI Language</label>
+        <select id="uiLanguage">
+          <option value="en">English</option>
+          <option value="ko">한국어</option>
+          <option value="zh">中文</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="wsUrl" data-i18n="field.wsUrl">WebSocket URL</label>
         <input id="wsUrl" value="">
       </div>
 
       <div class="field">
-        <label for="modelName">Model Name</label>
+        <label for="modelName" data-i18n="field.modelName">Model Name</label>
         <input id="modelName" value="qwen3-asr-rt">
       </div>
 
       <div class="language-grid">
         <div class="field">
-          <label for="primaryLanguage">Primary Language</label>
+          <label for="primaryLanguage" data-i18n="field.primaryLanguage">Primary Language</label>
           <select id="primaryLanguage"></select>
         </div>
         <div class="field">
-          <label for="secondaryLanguage">Secondary Language</label>
+          <label for="secondaryLanguage" data-i18n="field.secondaryLanguage">Secondary Language</label>
           <select id="secondaryLanguage"></select>
         </div>
       </div>
 
       <div class="field">
-        <label for="audioFile">Audio File Replay</label>
+        <label for="audioFile" data-i18n="field.audioFile">Audio File Replay</label>
         <input id="audioFile" type="file" accept="audio/*">
       </div>
 
       <div class="controls">
-        <button id="startBtn" class="primary">Start Mic</button>
-        <button id="playFileBtn" class="secondary">Play File</button>
-        <button id="transcribeFileBtn" class="secondary">Transcribe File</button>
-        <button id="stopBtn" class="danger" disabled>Stop</button>
-        <button id="clearBtn" class="secondary">Clear</button>
+        <button id="startBtn" class="primary" data-i18n="button.start">Start Mic</button>
+        <button id="playFileBtn" class="secondary" data-i18n="button.playFile">Play File</button>
+        <button id="transcribeFileBtn" class="secondary" data-i18n="button.transcribeFile">Transcribe File</button>
+        <button id="stopBtn" class="danger" disabled data-i18n="button.stop">Stop</button>
+        <button id="clearBtn" class="secondary" data-i18n="button.clear">Clear</button>
       </div>
 
       <div class="status">
-        <div class="status-row"><span>Connection</span><strong id="connState">idle</strong></div>
-        <div class="status-row"><span>Recorder</span><strong id="recState">stopped</strong></div>
-        <div class="status-row"><span>Source</span><strong id="sourceState">none</strong></div>
-        <div class="status-row"><span>Session</span><strong id="sessionId">-</strong></div>
-        <div class="status-row"><span>Language</span><strong id="langState">Korean</strong></div>
-        <div class="status-row"><span>Live</span><strong id="liveState">waiting</strong></div>
-        <div class="status-row"><span>Playback</span><strong id="playbackState">-</strong></div>
+        <div class="status-row"><span data-i18n="status.connection">Connection</span><strong id="connState">idle</strong></div>
+        <div class="status-row"><span data-i18n="status.recorder">Recorder</span><strong id="recState">stopped</strong></div>
+        <div class="status-row"><span data-i18n="status.source">Source</span><strong id="sourceState">none</strong></div>
+        <div class="status-row"><span data-i18n="status.session">Session</span><strong id="sessionId">-</strong></div>
+        <div class="status-row"><span data-i18n="status.language">Language</span><strong id="langState">Korean</strong></div>
+        <div class="status-row"><span data-i18n="status.live">Live</span><strong id="liveState">waiting</strong></div>
+        <div class="status-row"><span data-i18n="status.playback">Playback</span><strong id="playbackState">-</strong></div>
       </div>
 
-      <p class="hint">Use `localhost` in a desktop browser so microphone permissions work without HTTPS. Choose one language or up to two mixed languages before starting. File replay streams the uploaded audio in realtime, and server-side transcription can run directly from the uploaded file.</p>
+      <p class="hint" data-i18n="hint.main">Use `localhost` in a desktop browser so microphone permissions work without HTTPS. Choose one language or up to two mixed languages before starting. File replay streams the uploaded audio in realtime, and server-side transcription can run directly from the uploaded file.</p>
     </aside>
 
     <main class="card main">
-      <div id="liveBadge" class="pulse" style="visibility:hidden">Streaming audio</div>
+      <div id="liveBadge" class="pulse" style="visibility:hidden" data-i18n="badge.streaming">Streaming audio</div>
       <audio id="audioPlayer" class="player" controls preload="auto"></audio>
       <div id="transcript" class="transcript">Press Start Mic to begin realtime transcription.</div>
       <div id="log" class="log">ready</div>
@@ -327,6 +336,7 @@
   <script>
     const wsUrlInput = document.getElementById("wsUrl");
     const modelNameInput = document.getElementById("modelName");
+    const uiLanguageSelect = document.getElementById("uiLanguage");
     const primaryLanguageSelect = document.getElementById("primaryLanguage");
     const secondaryLanguageSelect = document.getElementById("secondaryLanguage");
     const audioFileInput = document.getElementById("audioFile");
@@ -378,6 +388,231 @@
       "Hungarian",
       "Macedonian",
     ];
+    const UI_COPY = {
+      en: {
+        "page.title": "Qwen ASR Realtime Demo",
+        "brand.eyebrow": "Realtime ASR",
+        "brand.title": "Qwen 1.7B Realtime ASR",
+        "brand.subtitle": "Microphone PCM streaming into a direct Qwen3ASRModel backend on this host. The UI now uses a dark theme and keeps the transcript view focused on the text stream.",
+        "field.uiLanguage": "UI Language",
+        "field.wsUrl": "WebSocket URL",
+        "field.modelName": "Model Name",
+        "field.primaryLanguage": "Primary Language",
+        "field.secondaryLanguage": "Secondary Language",
+        "field.audioFile": "Audio File Replay",
+        "button.start": "Start Mic",
+        "button.playFile": "Play File",
+        "button.transcribeFile": "Transcribe File",
+        "button.stop": "Stop",
+        "button.clear": "Clear",
+        "status.connection": "Connection",
+        "status.recorder": "Recorder",
+        "status.source": "Source",
+        "status.session": "Session",
+        "status.language": "Language",
+        "status.live": "Live",
+        "status.playback": "Playback",
+        "hint.main": "Use `localhost` in a desktop browser so microphone permissions work without HTTPS. Choose one language or up to two mixed languages before starting. File replay streams the uploaded audio in realtime, and server-side transcription can run directly from the uploaded file.",
+        "badge.streaming": "Streaming audio",
+        "option.none": "None",
+        "value.auto": "auto",
+        "transcript.idle": "Press Start Mic to begin realtime transcription.",
+        "transcript.listening": "Listening...",
+        "transcript.playing": "Playing uploaded audio...",
+        "transcript.uploading": "Uploading file for API transcription...",
+        "log.ready": "ready",
+        "log.connecting": "connecting {url}",
+        "log.sessionLanguages": "session languages: {value}",
+        "log.doneTokens": "done tokens={tokens}",
+        "log.error": "error {error}",
+        "log.event": "event {event}",
+        "log.microphoneStarted": "microphone stream started",
+        "log.startFailed": "start failed: {error}",
+        "log.selectFileFirst": "select an audio file first",
+        "log.fileReplayStarted": "file replay started: {name}",
+        "log.fileReplayFailed": "file replay failed: {error}",
+        "log.apiFileStarted": "api file transcription started: {name}",
+        "log.requestFailed": "transcription request failed ({status})",
+        "log.apiDone": "api transcription done tokens={tokens}",
+        "log.transcriptionError": "transcription error",
+        "log.fileTranscriptionFailed": "file transcription failed: {error}",
+        "log.finalResponseTimeout": "final response timeout; closing websocket",
+        "log.fileStreamStopped": "file stream stopped",
+        "log.microphoneStreamStopped": "microphone stream stopped",
+        "log.transcriptCleared": "transcript cleared",
+        "validate.insecure": "Microphone access requires HTTPS or localhost. Open this UI on localhost, or put port 8000 behind TLS.",
+        "validate.media": "This browser does not expose getUserMedia in the current context.",
+        "validate.ws": "HTTPS page cannot use ws://. Use a wss:// realtime endpoint.",
+        "error.websocket": "websocket connection failed",
+        "state.connection.idle": "idle",
+        "state.connection.connecting": "connecting",
+        "state.connection.open": "open",
+        "state.connection.closed": "closed",
+        "state.connection.error": "error",
+        "state.connection.processing": "processing",
+        "state.recorder.stopped": "stopped",
+        "state.recorder.recording": "recording",
+        "state.recorder.processing": "processing",
+        "state.source.none": "none",
+        "state.source.mic": "mic",
+        "state.source.file": "file",
+        "state.source.file-upload": "file-upload",
+        "state.live.waiting": "waiting",
+        "state.live.streaming": "streaming",
+        "state.playback.live": "live",
+        "state.playback.stopped": "stopped",
+        "state.playback.api-stream": "api-stream",
+      },
+      ko: {
+        "page.title": "Qwen ASR 실시간 데모",
+        "brand.eyebrow": "실시간 ASR",
+        "brand.title": "Qwen 1.7B 실시간 ASR",
+        "brand.subtitle": "이 호스트의 직접 연결된 Qwen3ASRModel 백엔드로 마이크 PCM 스트림을 보냅니다. UI는 다크 테마를 사용하며 전사 텍스트에 집중하도록 구성되어 있습니다.",
+        "field.uiLanguage": "UI 언어",
+        "field.wsUrl": "WebSocket URL",
+        "field.modelName": "모델 이름",
+        "field.primaryLanguage": "기본 언어",
+        "field.secondaryLanguage": "보조 언어",
+        "field.audioFile": "오디오 파일 재생",
+        "button.start": "마이크 시작",
+        "button.playFile": "파일 재생",
+        "button.transcribeFile": "파일 전사",
+        "button.stop": "중지",
+        "button.clear": "지우기",
+        "status.connection": "연결",
+        "status.recorder": "레코더",
+        "status.source": "입력 소스",
+        "status.session": "세션",
+        "status.language": "언어",
+        "status.live": "실시간",
+        "status.playback": "재생",
+        "hint.main": "`localhost`에서 열면 HTTPS 없이도 브라우저 마이크 권한이 동작합니다. 시작 전에 하나 또는 최대 두 개의 혼합 언어를 선택할 수 있습니다. 파일 재생은 업로드한 오디오를 실시간처럼 스트리밍하고, 서버 전사는 업로드 파일을 직접 처리합니다.",
+        "badge.streaming": "오디오 스트리밍 중",
+        "option.none": "없음",
+        "value.auto": "자동",
+        "transcript.idle": "실시간 전사를 시작하려면 마이크 시작을 누르세요.",
+        "transcript.listening": "듣는 중...",
+        "transcript.playing": "업로드한 오디오를 재생 중...",
+        "transcript.uploading": "API 전사를 위해 파일 업로드 중...",
+        "log.ready": "준비됨",
+        "log.connecting": "연결 중 {url}",
+        "log.sessionLanguages": "세션 언어: {value}",
+        "log.doneTokens": "완료 토큰={tokens}",
+        "log.error": "오류 {error}",
+        "log.event": "이벤트 {event}",
+        "log.microphoneStarted": "마이크 스트림 시작",
+        "log.startFailed": "시작 실패: {error}",
+        "log.selectFileFirst": "먼저 오디오 파일을 선택하세요",
+        "log.fileReplayStarted": "파일 재생 시작: {name}",
+        "log.fileReplayFailed": "파일 재생 실패: {error}",
+        "log.apiFileStarted": "API 파일 전사 시작: {name}",
+        "log.requestFailed": "전사 요청 실패 ({status})",
+        "log.apiDone": "API 전사 완료 토큰={tokens}",
+        "log.transcriptionError": "전사 오류",
+        "log.fileTranscriptionFailed": "파일 전사 실패: {error}",
+        "log.finalResponseTimeout": "최종 응답 대기시간 초과로 WebSocket을 닫습니다",
+        "log.fileStreamStopped": "파일 스트림 중지",
+        "log.microphoneStreamStopped": "마이크 스트림 중지",
+        "log.transcriptCleared": "전사 내용 지움",
+        "validate.insecure": "마이크 사용에는 HTTPS 또는 localhost가 필요합니다. 이 UI를 localhost에서 열거나 8000 포트를 TLS 뒤에 두세요.",
+        "validate.media": "현재 환경의 브라우저에서 getUserMedia를 사용할 수 없습니다.",
+        "validate.ws": "HTTPS 페이지에서는 ws://를 사용할 수 없습니다. wss:// 실시간 엔드포인트를 사용하세요.",
+        "error.websocket": "websocket 연결 실패",
+        "state.connection.idle": "대기",
+        "state.connection.connecting": "연결 중",
+        "state.connection.open": "열림",
+        "state.connection.closed": "닫힘",
+        "state.connection.error": "오류",
+        "state.connection.processing": "처리 중",
+        "state.recorder.stopped": "중지됨",
+        "state.recorder.recording": "녹음 중",
+        "state.recorder.processing": "처리 중",
+        "state.source.none": "없음",
+        "state.source.mic": "마이크",
+        "state.source.file": "파일",
+        "state.source.file-upload": "파일 업로드",
+        "state.live.waiting": "대기",
+        "state.live.streaming": "스트리밍",
+        "state.playback.live": "실시간",
+        "state.playback.stopped": "중지됨",
+        "state.playback.api-stream": "API 스트림",
+      },
+      zh: {
+        "page.title": "Qwen ASR 实时演示",
+        "brand.eyebrow": "实时 ASR",
+        "brand.title": "Qwen 1.7B 实时 ASR",
+        "brand.subtitle": "麦克风 PCM 音频会流式发送到当前主机上的直连 Qwen3ASRModel 后端。界面使用深色主题，并将重点放在转写文本上。",
+        "field.uiLanguage": "界面语言",
+        "field.wsUrl": "WebSocket 地址",
+        "field.modelName": "模型名称",
+        "field.primaryLanguage": "主语言",
+        "field.secondaryLanguage": "辅助语言",
+        "field.audioFile": "音频文件回放",
+        "button.start": "开始麦克风",
+        "button.playFile": "播放文件",
+        "button.transcribeFile": "转写文件",
+        "button.stop": "停止",
+        "button.clear": "清空",
+        "status.connection": "连接",
+        "status.recorder": "录音器",
+        "status.source": "来源",
+        "status.session": "会话",
+        "status.language": "语言",
+        "status.live": "实时",
+        "status.playback": "播放",
+        "hint.main": "在桌面浏览器中使用 `localhost` 打开即可在不使用 HTTPS 的情况下获取麦克风权限。开始前可选择一种或最多两种混合语言。文件回放会按实时方式发送上传音频，服务器转写则直接处理上传文件。",
+        "badge.streaming": "音频流传输中",
+        "option.none": "无",
+        "value.auto": "自动",
+        "transcript.idle": "点击开始麦克风以启动实时转写。",
+        "transcript.listening": "正在监听...",
+        "transcript.playing": "正在播放上传的音频...",
+        "transcript.uploading": "正在上传文件以进行 API 转写...",
+        "log.ready": "就绪",
+        "log.connecting": "正在连接 {url}",
+        "log.sessionLanguages": "会话语言: {value}",
+        "log.doneTokens": "完成 tokens={tokens}",
+        "log.error": "错误 {error}",
+        "log.event": "事件 {event}",
+        "log.microphoneStarted": "麦克风流已开始",
+        "log.startFailed": "启动失败: {error}",
+        "log.selectFileFirst": "请先选择音频文件",
+        "log.fileReplayStarted": "文件回放已开始: {name}",
+        "log.fileReplayFailed": "文件回放失败: {error}",
+        "log.apiFileStarted": "API 文件转写已开始: {name}",
+        "log.requestFailed": "转写请求失败 ({status})",
+        "log.apiDone": "API 转写完成 tokens={tokens}",
+        "log.transcriptionError": "转写错误",
+        "log.fileTranscriptionFailed": "文件转写失败: {error}",
+        "log.finalResponseTimeout": "最终响应超时，正在关闭 WebSocket",
+        "log.fileStreamStopped": "文件流已停止",
+        "log.microphoneStreamStopped": "麦克风流已停止",
+        "log.transcriptCleared": "已清空转写",
+        "validate.insecure": "麦克风访问需要 HTTPS 或 localhost。请在 localhost 打开此界面，或将 8000 端口放在 TLS 后面。",
+        "validate.media": "当前环境中的浏览器不支持 getUserMedia。",
+        "validate.ws": "HTTPS 页面不能使用 ws://。请使用 wss:// 实时端点。",
+        "error.websocket": "websocket 连接失败",
+        "state.connection.idle": "空闲",
+        "state.connection.connecting": "连接中",
+        "state.connection.open": "已打开",
+        "state.connection.closed": "已关闭",
+        "state.connection.error": "错误",
+        "state.connection.processing": "处理中",
+        "state.recorder.stopped": "已停止",
+        "state.recorder.recording": "录音中",
+        "state.recorder.processing": "处理中",
+        "state.source.none": "无",
+        "state.source.mic": "麦克风",
+        "state.source.file": "文件",
+        "state.source.file-upload": "文件上传",
+        "state.live.waiting": "等待中",
+        "state.live.streaming": "流式传输中",
+        "state.playback.live": "实时",
+        "state.playback.stopped": "已停止",
+        "state.playback.api-stream": "API 流",
+      },
+    };
+    const READY_TEXTS = new Set(Object.values(UI_COPY).map((copy) => copy["log.ready"]));
 
     let audioContext = null;
     let mediaStream = null;
@@ -405,24 +640,78 @@
     let objectUrl = null;
     let fileTranscriptionSource = null;
     let fileTranscriptionJobId = null;
+    let availableAsrLanguages = [...FALLBACK_LANGUAGES];
+    let uiLanguage = uiLanguageSelect.value || "en";
+    let connectionState = "idle";
+    let recorderState = "stopped";
+    let sourceState = "none";
+    let playbackState = "-";
+    let liveState = "waiting";
+    let transcriptPlaceholderKey = "transcript.idle";
     const TARGET_SAMPLE_RATE = 16000;
 
+    function t(key, vars = {}) {
+      const copy = UI_COPY[uiLanguage] || UI_COPY.en;
+      let text = copy[key] || UI_COPY.en[key] || key;
+      for (const [name, value] of Object.entries(vars)) {
+        text = text.replaceAll(`{${name}}`, String(value));
+      }
+      return text;
+    }
+
+    function translateState(category, value) {
+      if (value == null || value === "-") {
+        return value ?? "";
+      }
+      const key = `state.${category}.${value}`;
+      return (UI_COPY[uiLanguage] && UI_COPY[uiLanguage][key]) || UI_COPY.en[key] || value;
+    }
+
+    function renderConnectionState() {
+      connStateEl.textContent = translateState("connection", connectionState);
+    }
+
+    function renderRecorderState() {
+      recStateEl.textContent = translateState("recorder", recorderState);
+      liveBadgeEl.style.visibility = recorderState === "recording" ? "visible" : "hidden";
+    }
+
+    function renderSourceState() {
+      sourceStateEl.textContent = translateState("source", sourceState);
+    }
+
+    function renderPlaybackState() {
+      playbackStateEl.textContent = translateState("playback", playbackState);
+    }
+
+    function renderLiveState() {
+      liveStateEl.textContent = translateState("live", liveState);
+    }
+
     function setConnectionState(text) {
-      connStateEl.textContent = text;
+      connectionState = text;
+      renderConnectionState();
     }
 
     function setRecorderState(text) {
-      recStateEl.textContent = text;
-      liveBadgeEl.style.visibility = text === "recording" ? "visible" : "hidden";
-      liveStateEl.textContent = text === "recording" ? "streaming" : "waiting";
+      recorderState = text;
+      renderRecorderState();
+      setLiveState(text === "recording" ? "streaming" : "waiting");
     }
 
     function setSourceState(text) {
-      sourceStateEl.textContent = text;
+      sourceState = text;
+      renderSourceState();
     }
 
     function setPlaybackState(text) {
-      playbackStateEl.textContent = text;
+      playbackState = text;
+      renderPlaybackState();
+    }
+
+    function setLiveState(text) {
+      liveState = text;
+      renderLiveState();
     }
 
     function selectedLanguages() {
@@ -437,7 +726,7 @@
     }
 
     function describeLanguages() {
-      return selectedLanguages().join(" + ") || "auto";
+      return selectedLanguages().join(" + ") || t("value.auto");
     }
 
     function updateLanguageState() {
@@ -448,7 +737,7 @@
       const currentValue = selectEl.value;
       const options = [];
       if (allowEmpty) {
-        options.push('<option value="">None</option>');
+        options.push(`<option value="">${t("option.none")}</option>`);
       }
       for (const language of languages) {
         const selected = currentValue
@@ -461,25 +750,55 @@
       selectEl.innerHTML = options.join("");
     }
 
+    function renderTranscript() {
+      transcriptEl.textContent = transcript || t(transcriptPlaceholderKey);
+    }
+
+    function applyStaticTranslations() {
+      document.documentElement.lang = uiLanguage === "zh" ? "zh-CN" : uiLanguage;
+      document.title = t("page.title");
+      for (const node of document.querySelectorAll("[data-i18n]")) {
+        node.textContent = t(node.dataset.i18n);
+      }
+    }
+
+    function applyUiLanguage(lang) {
+      const currentLog = logEl.textContent.trim();
+      uiLanguage = UI_COPY[lang] ? lang : "en";
+      uiLanguageSelect.value = uiLanguage;
+      applyStaticTranslations();
+      fillLanguageSelect(primaryLanguageSelect, availableAsrLanguages, { allowEmpty: false });
+      fillLanguageSelect(secondaryLanguageSelect, availableAsrLanguages, { allowEmpty: true });
+      renderConnectionState();
+      renderRecorderState();
+      renderSourceState();
+      renderPlaybackState();
+      renderLiveState();
+      updateLanguageState();
+      renderTranscript();
+      if (!currentLog || READY_TEXTS.has(currentLog)) {
+        logEl.textContent = t("log.ready");
+      }
+    }
+
     async function loadLanguages() {
-      fillLanguageSelect(primaryLanguageSelect, FALLBACK_LANGUAGES, { allowEmpty: false });
-      fillLanguageSelect(secondaryLanguageSelect, FALLBACK_LANGUAGES, { allowEmpty: true });
+      fillLanguageSelect(primaryLanguageSelect, availableAsrLanguages, { allowEmpty: false });
+      fillLanguageSelect(secondaryLanguageSelect, availableAsrLanguages, { allowEmpty: true });
       primaryLanguageSelect.value = primaryLanguageSelect.value || "Korean";
       updateLanguageState();
 
-      let languages = FALLBACK_LANGUAGES;
       try {
         const response = await fetch("/v1/languages");
         if (response.ok) {
           const payload = await response.json();
           if (payload && Array.isArray(payload.data) && payload.data.length > 0) {
-            languages = payload.data;
+            availableAsrLanguages = payload.data;
           }
         }
       } catch (_) {
       }
-      fillLanguageSelect(primaryLanguageSelect, languages, { allowEmpty: false });
-      fillLanguageSelect(secondaryLanguageSelect, languages, { allowEmpty: true });
+      fillLanguageSelect(primaryLanguageSelect, availableAsrLanguages, { allowEmpty: false });
+      fillLanguageSelect(secondaryLanguageSelect, availableAsrLanguages, { allowEmpty: true });
       if (!primaryLanguageSelect.value) {
         primaryLanguageSelect.value = "Korean";
       }
@@ -504,17 +823,18 @@
 
     function appendTranscript(delta) {
       transcript += delta;
-      transcriptEl.textContent = transcript || "Listening...";
+      renderTranscript();
     }
 
     function replaceTranscript(text) {
       transcript = text || "";
-      transcriptEl.textContent = transcript || "Listening...";
+      renderTranscript();
     }
 
-    function resetTranscript() {
+    function resetTranscript(key = "transcript.idle") {
       transcript = "";
-      transcriptEl.textContent = "Press Start Mic to begin realtime transcription.";
+      transcriptPlaceholderKey = key;
+      renderTranscript();
     }
 
     function floatTo16BitPCM(float32) {
@@ -584,13 +904,13 @@
 
     function validateBrowserRealtimeSupport() {
       if (!window.isSecureContext && !isLocalHost(window.location.hostname)) {
-        throw new Error("Microphone access requires HTTPS or localhost. Open this UI on localhost, or put port 8000 behind TLS.");
+        throw new Error(t("validate.insecure"));
       }
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("This browser does not expose getUserMedia in the current context.");
+        throw new Error(t("validate.media"));
       }
       if (window.location.protocol === "https:" && wsUrlInput.value.trim().startsWith("ws://")) {
-        throw new Error("HTTPS page cannot use ws://. Use a wss:// realtime endpoint.");
+        throw new Error(t("validate.ws"));
       }
     }
 
@@ -633,7 +953,7 @@
         const socket = new WebSocket(wsUrlInput.value.trim());
         ws = socket;
         setConnectionState("connecting");
-        log(`connecting ${socket.url}`);
+        log(t("log.connecting", { url: socket.url }));
 
         socket.addEventListener("open", () => {
           setConnectionState("open");
@@ -649,7 +969,7 @@
               model: modelNameInput.value.trim(),
               languages: selectedLanguages(),
             }));
-            log(`session languages: ${describeLanguages()}`);
+            log(t("log.sessionLanguages", { value: describeLanguages() }));
             flushPendingChunks();
             resolve();
             return;
@@ -664,18 +984,18 @@
           }
           if (msg.type === "transcription.done") {
             replaceTranscript(msg.text || transcript);
-            log(`done tokens=${msg.usage ? msg.usage.total_tokens : "?"}`);
+            log(t("log.doneTokens", { tokens: msg.usage ? msg.usage.total_tokens : "?" }));
             if (stopRequested && ws && ws.readyState === WebSocket.OPEN) {
               ws.close();
             }
             return;
           }
           if (msg.type === "error") {
-            log(`error ${msg.error}`);
+            log(t("log.error", { error: msg.error }));
             reject(new Error(msg.error));
             return;
           }
-          log(`event ${event.data}`);
+          log(t("log.event", { event: event.data }));
         });
 
         socket.addEventListener("close", () => {
@@ -693,7 +1013,7 @@
 
         socket.addEventListener("error", () => {
           setConnectionState("error");
-          reject(new Error("websocket connection failed"));
+          reject(new Error(t("error.websocket")));
         });
       });
     }
@@ -709,8 +1029,7 @@
         closeTimer = null;
       }
       resetRealtimeState(mode);
-      resetTranscript();
-      transcriptEl.textContent = mode === "file" ? "Playing uploaded audio..." : "Listening...";
+      resetTranscript(mode === "file" ? "transcript.playing" : "transcript.listening");
       await openSocket();
     }
 
@@ -788,9 +1107,9 @@
         sourceNode.connect(processorNode);
         processorNode.connect(audioContext.destination);
         setRecorderState("recording");
-        log("microphone stream started");
+        log(t("log.microphoneStarted"));
       } catch (error) {
-        log(`start failed: ${error.message}`);
+        log(t("log.startFailed", { error: error.message }));
         await stopStreaming(false);
       }
     }
@@ -798,7 +1117,7 @@
     async function startFileReplay() {
       const file = audioFileInput.files && audioFileInput.files[0];
       if (!file) {
-        log("select an audio file first");
+        log(t("log.selectFileFirst"));
         return;
       }
       try {
@@ -816,10 +1135,10 @@
         fileSentSamples = 0;
         await audioPlayerEl.play();
         setRecorderState("recording");
-        log(`file replay started: ${file.name}`);
+        log(t("log.fileReplayStarted", { name: file.name }));
         startFileSendLoop();
       } catch (error) {
-        log(`file replay failed: ${error.message}`);
+        log(t("log.fileReplayFailed", { error: error.message }));
         await stopStreaming(false);
       }
     }
@@ -827,7 +1146,7 @@
     async function startServerFileTranscription() {
       const file = audioFileInput.files && audioFileInput.files[0];
       if (!file) {
-        log("select an audio file first");
+        log(t("log.selectFileFirst"));
         return;
       }
       try {
@@ -841,10 +1160,9 @@
         setRecorderState("processing");
         setSourceState("file-upload");
         setPlaybackState("api-stream");
-        resetTranscript();
-        transcriptEl.textContent = "Uploading file for API transcription...";
-        liveStateEl.textContent = "streaming";
-        log(`api file transcription started: ${file.name}`);
+        resetTranscript("transcript.uploading");
+        setLiveState("streaming");
+        log(t("log.apiFileStarted", { name: file.name }));
 
         const formData = new FormData();
         formData.append("file", file);
@@ -864,7 +1182,7 @@
           body: formData,
         });
         if (!response.ok || !response.body) {
-          throw new Error(`transcription request failed (${response.status})`);
+          throw new Error(t("log.requestFailed", { status: response.status }));
         }
 
         const reader = response.body.getReader();
@@ -902,11 +1220,11 @@
             }
             if (msg.type === "transcription.done") {
               replaceTranscript(msg.text || transcript);
-              log(`api transcription done tokens=${msg.usage ? msg.usage.total_tokens : "?"}`);
+              log(t("log.apiDone", { tokens: msg.usage ? msg.usage.total_tokens : "?" }));
               break;
             }
             if (msg.type === "error") {
-              throw new Error(msg.error || "transcription error");
+              throw new Error(msg.error || t("log.transcriptionError"));
             }
           }
         }
@@ -920,9 +1238,9 @@
         setRecorderState("stopped");
         setSourceState("none");
         setPlaybackState("-");
-        liveStateEl.textContent = "waiting";
+        setLiveState("waiting");
       } catch (error) {
-        log(`file transcription failed: ${error.message}`);
+        log(t("log.fileTranscriptionFailed", { error: error.message }));
         await stopStreaming(false);
       }
     }
@@ -968,7 +1286,7 @@
         ws.send(JSON.stringify({ type: "input_audio_buffer.commit", final: true }));
         closeTimer = setTimeout(() => {
           if (ws && ws.readyState === WebSocket.OPEN) {
-            log("final response timeout; closing websocket");
+            log(t("log.finalResponseTimeout"));
             ws.close();
           }
           closeTimer = null;
@@ -983,7 +1301,11 @@
       }
       if (!sendFinal) {
       }
-      log(`${streamMode === "file" || streamMode === "file-fast" ? "file stream" : "microphone stream"} stopped`);
+      log(
+        streamMode === "file" || streamMode === "file-fast"
+          ? t("log.fileStreamStopped")
+          : t("log.microphoneStreamStopped"),
+      );
       if (!sendFinal) {
         setSourceState("none");
         streamMode = "idle";
@@ -994,12 +1316,16 @@
     playFileBtn.addEventListener("click", startFileReplay);
     transcribeFileBtn.addEventListener("click", startServerFileTranscription);
     stopBtn.addEventListener("click", () => stopStreaming(true));
+    uiLanguageSelect.addEventListener("change", () => {
+      applyUiLanguage(uiLanguageSelect.value);
+    });
     primaryLanguageSelect.addEventListener("change", normalizeLanguageSelection);
     secondaryLanguageSelect.addEventListener("change", normalizeLanguageSelection);
     clearBtn.addEventListener("click", () => {
       resetTranscript();
-      log("transcript cleared");
+      log(t("log.transcriptCleared"));
     });
+    applyUiLanguage("en");
     loadLanguages();
 
   </script>
