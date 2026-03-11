@@ -98,7 +98,8 @@
     }
 
     .field input,
-    .field select {
+    .field select,
+    .field textarea {
       width: 100%;
       border: 1px solid var(--line);
       background: rgba(10, 14, 20, 0.88);
@@ -114,6 +115,12 @@
 
     .field select {
       appearance: none;
+    }
+
+    .field textarea {
+      min-height: 96px;
+      resize: vertical;
+      line-height: 1.45;
     }
 
     .language-grid {
@@ -372,6 +379,15 @@
         <input id="audioFile" type="file" accept="audio/*">
       </div>
 
+      <div class="field">
+        <label for="requestPrompt" data-i18n="field.requestPrompt">Request Prompt</label>
+        <textarea
+          id="requestPrompt"
+          data-i18n-placeholder="field.requestPromptPlaceholder"
+          placeholder="Add request-specific transcription instructions"
+        ></textarea>
+      </div>
+
       <div class="controls">
         <button id="startBtn" class="primary" data-i18n="button.start">Start Mic</button>
         <button id="playFileBtn" class="secondary" data-i18n="button.playFile">Play File</button>
@@ -408,6 +424,7 @@
     const primaryLanguageSelect = document.getElementById("primaryLanguage");
     const secondaryLanguageSelect = document.getElementById("secondaryLanguage");
     const audioFileInput = document.getElementById("audioFile");
+    const promptInput = document.getElementById("requestPrompt");
     const playFileBtn = document.getElementById("playFileBtn");
     const transcribeFileBtn = document.getElementById("transcribeFileBtn");
     const startBtn = document.getElementById("startBtn");
@@ -468,6 +485,8 @@
         "field.primaryLanguage": "Primary Language",
         "field.secondaryLanguage": "Secondary Language",
         "field.audioFile": "Audio File Replay",
+        "field.requestPrompt": "Request Prompt",
+        "field.requestPromptPlaceholder": "Add request-specific transcription instructions. This is appended to the server's default transcription context.",
         "button.start": "Start Mic",
         "button.playFile": "Play File",
         "button.transcribeFile": "Transcribe File",
@@ -494,6 +513,7 @@
         "log.ready": "ready",
         "log.connecting": "connecting {url}",
         "log.sessionLanguages": "session languages: {value}",
+        "log.sessionPrompt": "session prompt: {value}",
         "log.doneTokens": "done tokens={tokens}",
         "log.error": "error {error}",
         "log.event": "event {event}",
@@ -546,6 +566,8 @@
         "field.primaryLanguage": "기본 언어",
         "field.secondaryLanguage": "보조 언어",
         "field.audioFile": "오디오 파일 재생",
+        "field.requestPrompt": "요청 프롬프트",
+        "field.requestPromptPlaceholder": "요청별 전사 지시를 입력하세요. 서버 기본 전사 컨텍스트 뒤에 추가됩니다.",
         "button.start": "마이크 시작",
         "button.playFile": "파일 재생",
         "button.transcribeFile": "파일 전사",
@@ -572,6 +594,7 @@
         "log.ready": "준비됨",
         "log.connecting": "연결 중 {url}",
         "log.sessionLanguages": "세션 언어: {value}",
+        "log.sessionPrompt": "세션 프롬프트: {value}",
         "log.doneTokens": "완료 토큰={tokens}",
         "log.error": "오류 {error}",
         "log.event": "이벤트 {event}",
@@ -624,6 +647,8 @@
         "field.primaryLanguage": "主语言",
         "field.secondaryLanguage": "辅助语言",
         "field.audioFile": "音频文件回放",
+        "field.requestPrompt": "请求提示词",
+        "field.requestPromptPlaceholder": "填写本次转写的额外指令。该内容会追加到服务器默认转写上下文之后。",
         "button.start": "开始麦克风",
         "button.playFile": "播放文件",
         "button.transcribeFile": "转写文件",
@@ -650,6 +675,7 @@
         "log.ready": "就绪",
         "log.connecting": "正在连接 {url}",
         "log.sessionLanguages": "会话语言: {value}",
+        "log.sessionPrompt": "会话提示词: {value}",
         "log.doneTokens": "完成 tokens={tokens}",
         "log.error": "错误 {error}",
         "log.event": "事件 {event}",
@@ -810,6 +836,10 @@
       return selectedLanguages().join(" + ") || t("value.auto");
     }
 
+    function currentPrompt() {
+      return promptInput.value.trim();
+    }
+
     function updateLanguageState() {
       langStateEl.textContent = describeLanguages();
     }
@@ -884,6 +914,9 @@
       document.title = t("page.title");
       for (const node of document.querySelectorAll("[data-i18n]")) {
         node.textContent = t(node.dataset.i18n);
+      }
+      for (const node of document.querySelectorAll("[data-i18n-placeholder]")) {
+        node.setAttribute("placeholder", t(node.dataset.i18nPlaceholder));
       }
     }
 
@@ -1106,12 +1139,17 @@
           if (msg.type === "session.created") {
             sessionReady = true;
             sessionIdEl.textContent = msg.id;
+            const prompt = currentPrompt();
             ws.send(JSON.stringify({
               type: "session.update",
               model: modelNameInput.value.trim(),
               languages: selectedLanguages(),
+              prompt,
             }));
             log(t("log.sessionLanguages", { value: describeLanguages() }));
+            if (prompt) {
+              log(t("log.sessionPrompt", { value: prompt }));
+            }
             flushPendingChunks();
             resolve();
             return;
@@ -1309,11 +1347,15 @@
         const formData = new FormData();
         formData.append("file", file);
         const languages = selectedLanguages();
+        const prompt = currentPrompt();
         if (languages[0]) {
           formData.append("language", languages[0]);
         }
         if (languages[1]) {
           formData.append("secondary_language", languages[1]);
+        }
+        if (prompt) {
+          formData.append("prompt", prompt);
         }
         formData.append("timestamps", "true");
 

@@ -142,6 +142,7 @@ class TranscriptionOptions:
     languages: tuple[str, ...] = ()
     context: str = ASR_CONTEXT
     forced_language: str | None = None
+    request_prompt: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,11 +417,20 @@ def parse_requested_languages(*raw_values: object) -> tuple[str, ...]:
     return tuple(languages)
 
 
+def normalize_request_prompt(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def build_transcription_options(
     languages: tuple[str, ...] | list[str] | None = None,
+    prompt: str | None = None,
 ) -> TranscriptionOptions:
     langs = parse_requested_languages(list(languages or ()))
     parts = [ASR_CONTEXT.strip()]
+    request_prompt = normalize_request_prompt(prompt)
     forced_language: str | None = None
     if len(langs) == 1:
         forced_language = langs[0]
@@ -441,10 +451,13 @@ def build_transcription_options(
             parts.append(
                 "When Korean and English are mixed, keep clearly spoken English words in original English spelling."
             )
+    if request_prompt:
+        parts.append(f"Additional request-specific instructions: {request_prompt}")
     return TranscriptionOptions(
         languages=langs,
         context=" ".join(part for part in parts if part).strip(),
         forced_language=forced_language,
+        request_prompt=request_prompt,
     )
 
 
@@ -870,6 +883,7 @@ class SessionState:
     session_id: str = field(default_factory=lambda: f"rt-{uuid4()}")
     model_name: str = MODEL_NAME
     languages: tuple[str, ...] = field(default_factory=tuple)
+    prompt: str | None = None
     audio: np.ndarray = field(default_factory=lambda: np.zeros((0,), dtype=np.float32))
     processed_samples: int = 0
     committed_text: str = ""
@@ -906,6 +920,7 @@ class FileJob:
     path: Path
     filename: str
     languages: tuple[str, ...] = field(default_factory=tuple)
+    prompt: str | None = None
     queue: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     text: str = ""
     done: bool = False
@@ -1013,7 +1028,7 @@ async def emit_job_event(job: FileJob, payload: dict) -> None:
 async def run_file_job(job: FileJob) -> None:
     try:
         audio = await asyncio.to_thread(decode_audio_mono_16k, job.path)
-        options = build_transcription_options(job.languages)
+        options = build_transcription_options(job.languages, prompt=job.prompt)
         chunks = build_progressive_audio_chunks_with_offsets(audio)
         final_result = TranscriptionResult()
         aligned_chunks: list[AlignmentChunk] = []
@@ -1182,7 +1197,7 @@ def _transcribe_result_with_activity(
 async def generation_loop(state: SessionState) -> None:
     try:
         while not state.closed:
-            options = build_transcription_options(state.languages)
+            options = build_transcription_options(state.languages, prompt=state.prompt)
             await state.decode_event.wait()
             state.decode_event.clear()
 
@@ -1313,7 +1328,7 @@ async def create_audio_transcription(
     temperature: float | None = Form(default=None),
     timestamps: bool = Form(default=False),
 ):
-    del prompt, temperature
+    del temperature
     if model != MODEL_NAME:
         raise HTTPException(status_code=404, detail=f"unknown model: {model}")
 
@@ -1326,7 +1341,8 @@ async def create_audio_transcription(
     stream_enabled = str(stream).lower() == "true" if stream is not None else False
     try:
         options = build_transcription_options(
-            parse_requested_languages(language, secondary_language)
+            parse_requested_languages(language, secondary_language),
+            prompt=prompt,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1414,6 +1430,7 @@ async def create_file_transcription(
     file: UploadFile = File(...),
     language: str | None = Form(default=None),
     secondary_language: str | None = Form(default=None),
+    prompt: str | None = Form(default=None),
     timestamps: bool = Form(default=False),
 ) -> JSONResponse:
     suffix = Path(file.filename or "upload.bin").suffix or ".bin"
@@ -1432,6 +1449,7 @@ async def create_file_transcription(
         path=path,
         filename=file.filename or path.name,
         languages=languages,
+        prompt=normalize_request_prompt(prompt),
         timestamps=timestamps,
     )
     set_job(job)
@@ -1489,6 +1507,9 @@ async def realtime_endpoint(websocket: WebSocket) -> None:
             msg_type = message.get("type")
             if msg_type == "session.update":
                 state.model_name = message.get("model") or MODEL_NAME
+                state.prompt = normalize_request_prompt(
+                    message.get("prompt") or message.get("context")
+                )
                 try:
                     state.languages = parse_requested_languages(
                         message.get("languages"),
