@@ -23,7 +23,9 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from qwen_asr import Qwen3ASRModel
 from qwen_asr.inference.utils import (
+    MAX_ASR_INPUT_SECONDS,
     SUPPORTED_LANGUAGES,
+    merge_languages,
     normalize_language_name,
     split_audio_into_chunks,
     validate_language,
@@ -148,6 +150,14 @@ class TranscriptionResult:
     language: str | None = None
     words: tuple[dict[str, str | float], ...] = ()
     segments: tuple[dict[str, str | float], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentChunk:
+    audio: np.ndarray
+    offset_sec: float
+    text: str
+    language: str | None = None
 
 
 def env_flag(name: str, default: bool) -> bool:
@@ -439,6 +449,12 @@ def build_transcription_options(
 
 
 def build_progressive_audio_chunks(audio: np.ndarray) -> list[np.ndarray]:
+    return [chunk for chunk, _ in build_progressive_audio_chunks_with_offsets(audio)]
+
+
+def build_progressive_audio_chunks_with_offsets(
+    audio: np.ndarray,
+) -> list[tuple[np.ndarray, float]]:
     audio = normalize_audio_waveform(audio)
     if audio.size < MIN_TRANSCRIBE_SAMPLES:
         return []
@@ -447,8 +463,12 @@ def build_progressive_audio_chunks(audio: np.ndarray) -> list[np.ndarray]:
         sr=SAMPLE_RATE,
         max_chunk_sec=OFFLINE_PROGRESSIVE_CHUNK_SECONDS,
     )
-    chunks = [chunk.astype(np.float32, copy=False) for chunk, _ in parts if chunk.size >= MIN_TRANSCRIBE_SAMPLES]
-    return chunks or [audio]
+    chunks = [
+        (chunk.astype(np.float32, copy=False), float(offset_sec))
+        for chunk, offset_sec in parts
+        if chunk.size >= MIN_TRANSCRIBE_SAMPLES
+    ]
+    return chunks or [(audio, 0.0)]
 
 
 def transcribe_window(audio: np.ndarray, options: TranscriptionOptions) -> str:
@@ -551,6 +571,61 @@ def _build_sentence_segments(
     return tuple(segments)
 
 
+def _align_transcription_chunks(
+    chunks: list[AlignmentChunk],
+    merged_text: str,
+) -> TranscriptionResult:
+    valid = [chunk for chunk in chunks if chunk.text.strip()]
+    if not valid:
+        return TranscriptionResult(text=merged_text)
+
+    model = get_timestamp_model()
+    aligner = getattr(model, "forced_aligner", None)
+    if aligner is None:
+        raise ValueError(
+            "timestamps require a forced aligner. "
+            "Set QWEN_RT_ALIGNER_ID or QWEN_RT_ALIGNER_PATH, "
+            "or cache Qwen/Qwen3-ForcedAligner-0.6B locally."
+        )
+
+    audios = [(chunk.audio, SAMPLE_RATE) for chunk in valid]
+    texts = [chunk.text for chunk in valid]
+    languages = [chunk.language or "" for chunk in valid]
+
+    with _INFER_LOCK:
+        aligned = aligner.align(audio=audios, text=texts, language=languages)
+
+    words: list[dict[str, str | float]] = []
+    merged_languages = merge_languages(
+        [chunk.language for chunk in valid if chunk.language]
+    ) or None
+    for chunk, result in zip(valid, aligned):
+        for item in getattr(result, "items", []):
+            words.append(
+                {
+                    "text": str(getattr(item, "text", "") or "").strip(),
+                    "start": round(
+                        float(getattr(item, "start_time", 0.0) or 0.0)
+                        + chunk.offset_sec,
+                        3,
+                    ),
+                    "end": round(
+                        float(getattr(item, "end_time", 0.0) or 0.0)
+                        + chunk.offset_sec,
+                        3,
+                    ),
+                }
+            )
+
+    words_tuple = tuple(word for word in words if word["text"] or word["end"] > word["start"])
+    return TranscriptionResult(
+        text=merged_text,
+        language=merged_languages,
+        words=words_tuple,
+        segments=_build_sentence_segments(words_tuple),
+    )
+
+
 def transcribe_result(
     audio: np.ndarray,
     options: TranscriptionOptions,
@@ -559,28 +634,50 @@ def transcribe_result(
     audio = normalize_audio_waveform(audio)
     if audio.size < MIN_TRANSCRIBE_SAMPLES:
         return TranscriptionResult()
+
+    parts = split_audio_into_chunks(
+        wav=audio,
+        sr=SAMPLE_RATE,
+        max_chunk_sec=MAX_ASR_INPUT_SECONDS,
+    )
+    chunks = [
+        (chunk.astype(np.float32, copy=False), float(offset_sec))
+        for chunk, offset_sec in parts
+        if chunk.size >= MIN_TRANSCRIBE_SAMPLES
+    ] or [(audio, 0.0)]
+
     with _INFER_LOCK:
-        model = get_timestamp_model() if return_timestamps else get_model()
-        results = model.transcribe(
-            (audio, SAMPLE_RATE),
+        results = get_model().transcribe(
+            [(chunk, SAMPLE_RATE) for chunk, _ in chunks],
             context=options.context,
             language=options.forced_language,
-            return_time_stamps=return_timestamps,
         )
     if not results:
         return TranscriptionResult()
-    result = results[0]
-    words = ()
-    segments = ()
-    if return_timestamps:
-        words = _serialize_word_timestamps(getattr(result, "time_stamps", None))
-        segments = _build_sentence_segments(words)
-    return TranscriptionResult(
-        text=(getattr(result, "text", "") or "").strip(),
-        language=(getattr(result, "language", "") or "").strip() or None,
-        words=words,
-        segments=segments,
-    )
+
+    chunk_results: list[AlignmentChunk] = []
+    merged_text_parts: list[str] = []
+    merged_languages: list[str] = []
+    for (chunk_audio, offset_sec), result in zip(chunks, results):
+        text = (getattr(result, "text", "") or "").strip()
+        language = (getattr(result, "language", "") or "").strip() or options.forced_language
+        merged_text_parts.append(text)
+        if language:
+            merged_languages.append(language)
+        chunk_results.append(
+            AlignmentChunk(
+                audio=chunk_audio,
+                offset_sec=offset_sec,
+                text=text,
+                language=language,
+            )
+        )
+
+    merged_text = "".join(merged_text_parts)
+    merged_language = merge_languages(merged_languages) or None
+    if not return_timestamps:
+        return TranscriptionResult(text=merged_text, language=merged_language)
+    return _align_transcription_chunks(chunk_results, merged_text)
 
 
 def merge_speech_chunks(
@@ -917,8 +1014,9 @@ async def run_file_job(job: FileJob) -> None:
     try:
         audio = await asyncio.to_thread(decode_audio_mono_16k, job.path)
         options = build_transcription_options(job.languages)
-        chunks = build_progressive_audio_chunks(audio)
+        chunks = build_progressive_audio_chunks_with_offsets(audio)
         final_result = TranscriptionResult()
+        aligned_chunks: list[AlignmentChunk] = []
         job.total_segments = max(1, len(chunks))
         await emit_job_event(
             job,
@@ -932,12 +1030,20 @@ async def run_file_job(job: FileJob) -> None:
         )
         total_samples = max(int(audio.size), 1)
         consumed_samples = 0
-        for idx, chunk in enumerate(chunks, start=1):
+        for idx, (chunk, offset_sec) in enumerate(chunks, start=1):
             if job.cancel_requested:
                 raise RuntimeError("cancelled")
-            segment_text = await maybe_transcribe(chunk, options)
-            if segment_text:
-                job.text = append_without_overlap(job.text, segment_text)
+            chunk_result = await maybe_transcribe_result(chunk, options)
+            if chunk_result.text:
+                job.text = append_without_overlap(job.text, chunk_result.text)
+                aligned_chunks.append(
+                    AlignmentChunk(
+                        audio=chunk,
+                        offset_sec=offset_sec,
+                        text=chunk_result.text,
+                        language=chunk_result.language or options.forced_language,
+                    )
+                )
                 await emit_job_event(
                     job,
                     {
@@ -968,12 +1074,11 @@ async def run_file_job(job: FileJob) -> None:
 
         final_result = TranscriptionResult(text=job.text)
         if job.timestamps:
-            final_result = await maybe_transcribe_result(
-                audio,
-                options,
-                return_timestamps=True,
+            final_result = await asyncio.to_thread(
+                _align_transcription_chunks,
+                aligned_chunks,
+                job.text,
             )
-            job.text = final_result.text
 
         job.done = True
         done_payload: dict[str, object] = {

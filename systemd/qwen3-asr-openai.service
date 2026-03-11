@@ -1,0 +1,17 @@
+[Unit]
+Description=Qwen3 ASR OpenAI-compatible server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=uaysk
+WorkingDirectory=/home/uaysk/llama-swap/qwen3-asr-openai
+Environment=HOST=0.0.0.0
+Environment=PORT=3003
+ExecStart=/home/uaysk/llama-swap/qwen3-asr-openai/run.sh --host 0.0.0.0 --port 3003
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -219,6 +219,74 @@
       white-space: pre-wrap;
     }
 
+    .transcript.has-segments {
+      white-space: normal;
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .transcript-full {
+      display: grid;
+      gap: 10px;
+      padding: 18px 18px 20px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--line);
+    }
+
+    .transcript-label {
+      width: fit-content;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: rgba(255, 122, 89, 0.14);
+      color: var(--accent-2);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .transcript-full-text {
+      font-size: clamp(18px, 2vw, 26px);
+      line-height: 1.45;
+      letter-spacing: -0.03em;
+      white-space: pre-wrap;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+    }
+
+    .segment-card {
+      display: grid;
+      gap: 10px;
+      padding: 16px 18px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--line);
+    }
+
+    .segment-time {
+      width: fit-content;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: rgba(57, 198, 167, 0.14);
+      color: var(--accent);
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+
+    .segment-text {
+      font-size: clamp(18px, 2vw, 26px);
+      line-height: 1.45;
+      letter-spacing: -0.03em;
+      white-space: pre-wrap;
+    }
+
     .hint {
       color: var(--muted);
       font-size: 13px;
@@ -420,6 +488,9 @@
         "transcript.listening": "Listening...",
         "transcript.playing": "Playing uploaded audio...",
         "transcript.uploading": "Uploading file for API transcription...",
+        "transcript.timestampPending": "Processing full-file timestamps...",
+        "transcript.fullLabel": "Full Transcript",
+        "transcript.timelineLabel": "Timestamp Timeline",
         "log.ready": "ready",
         "log.connecting": "connecting {url}",
         "log.sessionLanguages": "session languages: {value}",
@@ -434,6 +505,7 @@
         "log.apiFileStarted": "api file transcription started: {name}",
         "log.requestFailed": "transcription request failed ({status})",
         "log.apiDone": "api transcription done tokens={tokens}",
+        "log.apiTimestampsReady": "timestamps ready segments={segments}",
         "log.transcriptionError": "transcription error",
         "log.fileTranscriptionFailed": "file transcription failed: {error}",
         "log.finalResponseTimeout": "final response timeout; closing websocket",
@@ -494,6 +566,9 @@
         "transcript.listening": "듣는 중...",
         "transcript.playing": "업로드한 오디오를 재생 중...",
         "transcript.uploading": "API 전사를 위해 파일 업로드 중...",
+        "transcript.timestampPending": "전체 파일 타임스탬프 정리 중...",
+        "transcript.fullLabel": "전체 전사문",
+        "transcript.timelineLabel": "타임스탬프 타임라인",
         "log.ready": "준비됨",
         "log.connecting": "연결 중 {url}",
         "log.sessionLanguages": "세션 언어: {value}",
@@ -508,6 +583,7 @@
         "log.apiFileStarted": "API 파일 전사 시작: {name}",
         "log.requestFailed": "전사 요청 실패 ({status})",
         "log.apiDone": "API 전사 완료 토큰={tokens}",
+        "log.apiTimestampsReady": "타임스탬프 준비 완료 세그먼트={segments}",
         "log.transcriptionError": "전사 오류",
         "log.fileTranscriptionFailed": "파일 전사 실패: {error}",
         "log.finalResponseTimeout": "최종 응답 대기시간 초과로 WebSocket을 닫습니다",
@@ -568,6 +644,9 @@
         "transcript.listening": "正在监听...",
         "transcript.playing": "正在播放上传的音频...",
         "transcript.uploading": "正在上传文件以进行 API 转写...",
+        "transcript.timestampPending": "正在整理整段文件的时间戳...",
+        "transcript.fullLabel": "完整转写",
+        "transcript.timelineLabel": "时间戳时间线",
         "log.ready": "就绪",
         "log.connecting": "正在连接 {url}",
         "log.sessionLanguages": "会话语言: {value}",
@@ -582,6 +661,7 @@
         "log.apiFileStarted": "API 文件转写已开始: {name}",
         "log.requestFailed": "转写请求失败 ({status})",
         "log.apiDone": "API 转写完成 tokens={tokens}",
+        "log.apiTimestampsReady": "时间戳已就绪 segments={segments}",
         "log.transcriptionError": "转写错误",
         "log.fileTranscriptionFailed": "文件转写失败: {error}",
         "log.finalResponseTimeout": "最终响应超时，正在关闭 WebSocket",
@@ -631,6 +711,7 @@
     let pendingChunks = [];
     let sentStartCommit = false;
     let transcript = "";
+    let transcriptSegments = [];
     let stopRequested = false;
     let closeTimer = null;
     let streamMode = "idle";
@@ -751,7 +832,51 @@
     }
 
     function renderTranscript() {
+      if (transcriptSegments.length > 0) {
+        transcriptEl.classList.add("has-segments");
+        const fullText = escapeHtml(transcript || "");
+        const timeline = transcriptSegments
+          .map((segment) => {
+            const start = formatTimestamp(segment.start);
+            const end = formatTimestamp(segment.end);
+            return `
+              <div class="segment-card">
+                <div class="segment-time">${escapeHtml(`${start} - ${end}`)}</div>
+                <div class="segment-text">${escapeHtml(segment.text || "")}</div>
+              </div>
+            `;
+          })
+          .join("");
+        transcriptEl.innerHTML = `
+          <div class="transcript-full">
+            <div class="transcript-label">${escapeHtml(t("transcript.fullLabel"))}</div>
+            <div class="transcript-full-text">${fullText}</div>
+          </div>
+          <div class="timeline">
+            <div class="transcript-label">${escapeHtml(t("transcript.timelineLabel"))}</div>
+            ${timeline}
+          </div>
+        `;
+        return;
+      }
+      transcriptEl.classList.remove("has-segments");
       transcriptEl.textContent = transcript || t(transcriptPlaceholderKey);
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll("\"", "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function formatTimestamp(value) {
+      const totalSeconds = Math.max(0, Number(value) || 0);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds - minutes * 60;
+      return `${String(minutes).padStart(2, "0")}:${seconds.toFixed(1).padStart(4, "0")}`;
     }
 
     function applyStaticTranslations() {
@@ -822,17 +947,34 @@
     }
 
     function appendTranscript(delta) {
+      transcriptSegments = [];
       transcript += delta;
       renderTranscript();
     }
 
     function replaceTranscript(text) {
+      transcriptSegments = [];
       transcript = text || "";
+      renderTranscript();
+    }
+
+    function replaceTranscriptSegments(segments, fullText = "") {
+      transcript = fullText || transcript;
+      transcriptSegments = Array.isArray(segments)
+        ? segments
+            .filter((segment) => segment && typeof segment === "object")
+            .map((segment) => ({
+              start: Number(segment.start) || 0,
+              end: Number(segment.end) || 0,
+              text: String(segment.text || ""),
+            }))
+        : [];
       renderTranscript();
     }
 
     function resetTranscript(key = "transcript.idle") {
       transcript = "";
+      transcriptSegments = [];
       transcriptPlaceholderKey = key;
       renderTranscript();
     }
@@ -1166,7 +1308,6 @@
 
         const formData = new FormData();
         formData.append("file", file);
-        formData.append("model", modelNameInput.value.trim());
         const languages = selectedLanguages();
         if (languages[0]) {
           formData.append("language", languages[0]);
@@ -1174,60 +1315,67 @@
         if (languages[1]) {
           formData.append("secondary_language", languages[1]);
         }
-        formData.append("stream", "true");
-        formData.append("response_format", "json");
+        formData.append("timestamps", "true");
 
-        const response = await fetch("/v1/audio/transcriptions", {
+        const response = await fetch("/v1/file-transcriptions", {
           method: "POST",
           body: formData,
         });
-        if (!response.ok || !response.body) {
+        if (!response.ok) {
           throw new Error(t("log.requestFailed", { status: response.status }));
         }
+        const payload = await response.json();
+        if (!payload || !payload.job_id || !payload.events_url) {
+          throw new Error(t("log.transcriptionError"));
+        }
+        fileTranscriptionJobId = payload.job_id;
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) {
-            break;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          while (buffer.includes("\n\n")) {
-            const splitIndex = buffer.indexOf("\n\n");
-            const event = buffer.slice(0, splitIndex);
-            buffer = buffer.slice(splitIndex + 2);
-            const dataLines = event
-              .split("\n")
-              .filter((line) => line.startsWith("data:"))
-              .map((line) => line.slice(5).trim());
-            if (dataLines.length === 0) {
-              continue;
-            }
-            const data = dataLines.join("\n");
-            if (data === "[DONE]") {
-              continue;
-            }
-            const msg = JSON.parse(data);
+        await new Promise((resolve, reject) => {
+          fileTranscriptionSource = new EventSource(payload.events_url);
+
+          fileTranscriptionSource.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
             if (msg.type === "transcription.partial") {
               replaceTranscript(msg.text || "");
-              continue;
+              return;
             }
-            if (msg.type === "transcription.delta") {
-              appendTranscript(msg.delta || "");
-              continue;
+            if (msg.type === "file.progress") {
+              if (msg.audio_progress >= 1 && transcriptSegments.length === 0) {
+                transcriptPlaceholderKey = "transcript.timestampPending";
+                renderTranscript();
+              }
+              return;
             }
             if (msg.type === "transcription.done") {
-              replaceTranscript(msg.text || transcript);
+              if (Array.isArray(msg.segments) && msg.segments.length > 0) {
+                replaceTranscriptSegments(msg.segments, msg.text || transcript);
+                log(t("log.apiTimestampsReady", { segments: msg.segments.length }));
+              } else {
+                replaceTranscript(msg.text || transcript);
+              }
               log(t("log.apiDone", { tokens: msg.usage ? msg.usage.total_tokens : "?" }));
-              break;
+              stopFileTranscriptionStream();
+              resolve();
+              return;
             }
             if (msg.type === "error") {
-              throw new Error(msg.error || t("log.transcriptionError"));
+              stopFileTranscriptionStream();
+              reject(new Error(msg.error || t("log.transcriptionError")));
             }
-          }
-        }
+          };
+
+          fileTranscriptionSource.addEventListener("close", () => {
+            stopFileTranscriptionStream();
+          });
+
+          fileTranscriptionSource.onerror = () => {
+            const activeSource = fileTranscriptionSource;
+            stopFileTranscriptionStream();
+            if (activeSource) {
+              reject(new Error(t("log.transcriptionError")));
+            }
+          };
+        });
 
         stopBtn.disabled = true;
         startBtn.disabled = false;
